@@ -1,0 +1,98 @@
+{
+  "cards": [
+	{
+	  "id": 1,
+	  "type": "GAIN_MONEY",
+	  "amount": 200,
+	  "text": "Tchê, acertou na mosca! Vendeu um lote de erva-mate de primeira e embolsou R$ 200."
+	},
+	{
+	  "id": 2,
+	  "type": "GAIN_MONEY",
+	  "amount": 150,
+	  "text": "Bah, que barbaridade de sorte! Ganhou no bolão do churrasco dominical: +R$ 150."
+	},
+	{
+	  "id": 3,
+	  "type": "GAIN_MONEY",
+	  "amount": 100,
+	  "text": "Ficou em destaque na festa da colônia e recebeu R$ 100 de bonificação."
+	},
+	{
+	  "id": 4,
+	  "type": "PAY_MONEY",
+	  "amount": 100,
+	  "text": "Atolou o carro na estrada de chão após a chuva! Pagou R$ 100 de guincho."
+	},
+	{
+	  "id": 5,
+	  "type": "PAY_MONEY",
+	  "amount": 150,
+	  "text": "A chaleira estourou bem na hora do mate e molhou o galpão! Prejuízo de R$ 150."
+	},
+	{
+	  "id": 6,
+	  "type": "PAY_MONEY",
+	  "amount": 50,
+	  "text": "Caprichou demais no carreteiro e sobrou conta no armazém: pague R$ 50."
+	},
+	{
+	  "id": 7,
+	  "type": "MOVE_TO_START",
+	  "text": "Pegou o atalho da coxilha e voltou direto ao Galpão Central! Receba o bônus da partida."
+	},
+	{
+	  "id": 8,
+	  "type": "GO_TO_JAIL",
+	  "text": "Deu ruim, vivente! Estava sem documento do carreto e foi direto pro Xadrez!"
+	},
+	{
+	  "id": 9,
+	  "type": "MOVE_STEPS",
+	  "steps": 3,
+	  "text": "Pegou um vento minuano a favor! Avance 3 casas no tabuleiro."
+	},
+	{
+	  "id": 10,
+	  "type": "MOVE_STEPS",
+	  "steps": -2,
+	  "text": "Esqueceu a cuia e a bomba para trás! Volte 2 casas (sem passar pela partida)."
+	},
+	{
+	  "id": 11,
+	  "type": "GET_OUT_OF_JAIL_FREE",
+	  "text": "Carta de Alforria da Estância! Guarde esta carta para sair livre do Xadrez sem pagar fiança."
+	},
+	{
+	  "id": 12,
+	  "type": "GET_OUT_OF_JAIL_FREE",
+	  "text": "Salvo-Conduto Farroupilha! Guarde esta carta para sair livre do Xadrez quando precisar."
+	},
+	{
+	  "id": 13,
+	  "type": "REPAIR_BUILDINGS",
+	  "house_cost": 25,
+	  "hotel_cost": 100,
+	  "text": "Temporal de inverno derrubou telhas no pampa! Pague R$ 25 por cada casa e R$ 100 por cada hotel."
+	},
+	{
+	  "id": 14,
+	  "type": "REPAIR_BUILDINGS",
+	  "house_cost": 40,
+	  "hotel_cost": 115,
+	  "text": "Vistoria de reforma nos galpões e estâncias! Pague R$ 40 por casa e R$ 115 por hotel."
+	},
+	{
+	  "id": 15,
+	  "type": "COLLECT_FROM_ALL",
+	  "amount": 50,
+	  "text": "É dia do seu aniversário no CTG! Cada jogador ativo lhe presenteia com R$ 50."
+	},
+	{
+	  "id": 16,
+	  "type": "PAY_ALL",
+	  "amount": 50,
+	  "text": "Você assumiu a presidência do fandango e bancou a rodada! Pague R$ 50 a cada jogador ativo."
+	}
+  ]
+}
