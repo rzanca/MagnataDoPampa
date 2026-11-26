@@ -1,0 +1,34 @@
+{
+  "project": "Magnata do Pampa",
+  "mode": "Modo Clássico",
+  "tasks": [
+    {
+      "id": "TASK-01",
+      "title": "Registrar PlatformConfig.gd como Autoload e validar compilação headless no Godot 4.7.x",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "pending",
+      "notes": "Garantir tipagem estática em core/PlatformConfig.gd e zero erros no Godot CLI."
+    },
+    {
+      "id": "TASK-02",
+      "title": "Mapear sinais de GameManager.gd, BoardView.gd e GameHUD.gd em docs/ARCHITECTURE.md",
+      "owner_agent": "01_arquiteto_hibrido.md",
+      "status": "pending",
+      "notes": "Documentar interfaces e eventos existentes sem alterar regras do Modo Clássico."
+    },
+    {
+      "id": "TASK-03",
+      "title": "Criar base de UI dedicada em ui/desktop/ e ui/android/ com componentes em ui/shared/",
+      "owner_agent": "03_engenheiro_ui_hibrida.md",
+      "status": "pending",
+      "notes": "Conectar aos sinais do núcleo e respeitar PlatformConfig.is_mobile_ui_active()."
+    },
+    {
+      "id": "TASK-04",
+      "title": "Rodar validação headless, corrigir falhas de script/cena e comitar no Git",
+      "owner_agent": "04_qa_devops.md",
+      "status": "pending",
+      "notes": "Executar apenas uma instância do Godot por vez no Ryzen 7 5700G com 16GB de RAM."
+    }
+  ]
+}
