@@ -25,6 +25,9 @@ const ISO_CAM_OFFSET: Vector3 = ISO_CAM_POS - ISO_CAM_TARGET
 const ISO_CAM_SIZE: float = 16.4
 const TOP_CAM_POS: Vector3 = Vector3(0.0, 20.0, 0.001)
 const TOP_CAM_SIZE: float = 15.35
+const MIN_ZOOM_SCALE: float = 0.44
+const MAX_ZOOM_SCALE: float = 1.45
+const PAN_MAX_RADIUS: float = 6.5
 
 const TILE_DEFAULT_BG: Color = Color("#151F1A")
 const TILE_HOVER_BG: Color = Color("#25392E")
@@ -92,6 +95,10 @@ var _anim_card_label: Label3D
 
 var _is_2d_view: bool = false
 var _camera_follow_enabled: bool = true
+var _user_zoom_scale: float = 1.0
+var _user_pan_offset: Vector3 = Vector3.ZERO
+var _is_panning_camera: bool = false
+var _pan_last_mouse_pos: Vector2 = Vector2.ZERO
 var _hovered_tile: int = -1
 var _anim_token: int = 0
 var _moving_player_id: int = -1
@@ -299,20 +306,24 @@ func _get_effective_cam_size(to_2d: bool) -> float:
 		aspect = maxf(320.0, viewport_size.x - 8.0) / maxf(240.0, viewport_size.y - 8.0)
 	elif _sub_viewport != null and _sub_viewport.size.y > 0:
 		aspect = float(_sub_viewport.size.x) / float(_sub_viewport.size.y)
+	var base_size: float = maxf(ISO_CAM_SIZE, 20.8 / maxf(0.5, aspect))
 	if to_2d:
-		return maxf(TOP_CAM_SIZE, 15.6 / maxf(0.5, aspect))
-	return maxf(ISO_CAM_SIZE, 20.8 / maxf(0.5, aspect))
+		base_size = maxf(TOP_CAM_SIZE, 15.6 / maxf(0.5, aspect))
+	return base_size * clampf(_user_zoom_scale, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
+
+func _get_camera_base_pos(to_2d: bool) -> Vector3:
+	return (TOP_CAM_POS if to_2d else ISO_CAM_POS) + _user_pan_offset
 
 func _apply_camera_pose_immediate(to_2d: bool) -> void:
 	_is_2d_view = to_2d
 	if _camera == null:
 		return
 	if to_2d:
-		_camera.position = TOP_CAM_POS
+		_camera.position = _get_camera_base_pos(true)
 		_camera.quaternion = _get_top_quaternion()
 		_camera.size = _get_effective_cam_size(true)
 	else:
-		_camera.position = ISO_CAM_POS
+		_camera.position = _get_camera_base_pos(false)
 		_camera.quaternion = _get_iso_quaternion()
 		_camera.size = _get_effective_cam_size(false)
 	_sync_token_medallions_to_camera(to_2d, false)
@@ -341,18 +352,72 @@ func toggle_camera_follow() -> bool:
 	return _camera_follow_enabled
 
 func reset_camera_framing(animate: bool = true) -> void:
+	_user_zoom_scale = 1.0
+	_user_pan_offset = Vector3.ZERO
+	_is_panning_camera = false
 	set_camera_2d_mode(_is_2d_view, animate)
 
-func _focus_camera_on_world_pos(world_pos: Vector3, zoom_factor: float = 0.74, duration: float = 0.22) -> void:
+func get_user_zoom_scale() -> float:
+	return _user_zoom_scale
+
+func get_user_pan_offset() -> Vector3:
+	return _user_pan_offset
+
+func zoom_in() -> void:
+	zoom_camera(0.86, true)
+
+func zoom_out() -> void:
+	zoom_camera(1.16, true)
+
+func zoom_camera(factor: float, animate: bool = true) -> void:
+	_user_zoom_scale = clampf(_user_zoom_scale * factor, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
+	if _camera == null:
+		return
+	var target_size: float = _get_effective_cam_size(_is_2d_view)
+	if not animate or not is_inside_tree():
+		_camera.size = target_size
+		return
+	if _camera_tween != null and _camera_tween.is_valid():
+		_camera_tween.kill()
+	_camera_tween = create_tween()
+	_camera_tween.set_trans(Tween.TRANS_SINE)
+	_camera_tween.set_ease(Tween.EASE_OUT)
+	_camera_tween.tween_property(_camera, "size", target_size, 0.16)
+
+func pan_camera_by_screen_delta(screen_delta: Vector2) -> void:
+	if _camera == null or screen_delta.length_squared() < 0.01:
+		return
+	var view_h: float = maxf(240.0, viewport_size.y)
+	var world_per_px: float = _camera.size / view_h
+	var cam_right: Vector3 = _camera.global_basis.x
+	cam_right.y = 0.0
+	cam_right = cam_right.normalized() if cam_right.length_squared() > 0.0001 else Vector3.RIGHT
+	var cam_down: Vector3 = -_camera.global_basis.y
+	cam_down.y = 0.0
+	if cam_down.length_squared() < 0.0001:
+		cam_down = Vector3(0.0, 0.0, 1.0)
+	else:
+		cam_down = cam_down.normalized()
+	var move_xz: Vector3 = (-cam_right * screen_delta.x - cam_down * screen_delta.y) * world_per_px
+	_user_pan_offset = Vector3(
+		clampf(_user_pan_offset.x + move_xz.x, -PAN_MAX_RADIUS, PAN_MAX_RADIUS),
+		0.0,
+		clampf(_user_pan_offset.z + move_xz.z, -PAN_MAX_RADIUS, PAN_MAX_RADIUS)
+	)
+	if _moving_player_id < 0:
+		_kill_camera_tweens()
+		_camera.position = _get_camera_base_pos(_is_2d_view)
+
+func _focus_camera_on_world_pos(world_pos: Vector3, zoom_factor: float = 0.50, duration: float = 0.22) -> void:
 	if _is_2d_view or not _camera_follow_enabled or _camera == null or not is_inside_tree():
 		return
 	_kill_camera_tweens()
-	# Foco amortecido mantendo boa leitura do entorno sem sair da mesa
-	var damped_x: float = clampf(world_pos.x * 0.56, -3.6, 3.6)
-	var damped_z: float = clampf(world_pos.z * 0.56, -3.6, 3.6)
+	# Foco aproximado acompanhando o peão sem perder a leitura do lance
+	var damped_x: float = clampf(world_pos.x * 0.80, -5.2, 5.2)
+	var damped_z: float = clampf(world_pos.z * 0.80, -5.2, 5.2)
 	var focus_target: Vector3 = Vector3(damped_x, ISO_CAM_TARGET.y, damped_z + 0.15)
 	var cam_dest: Vector3 = focus_target + ISO_CAM_OFFSET
-	var cam_size: float = _get_effective_cam_size(false) * clampf(zoom_factor, 0.62, 1.0)
+	var cam_size: float = _get_effective_cam_size(false) * clampf(zoom_factor, 0.44, 1.0)
 
 	_camera_tween = create_tween()
 	_camera_tween.set_parallel(true)
@@ -367,6 +432,7 @@ func _schedule_camera_overview_return(delay_sec: float = 0.55) -> void:
 	if _camera_return_tween != null and _camera_return_tween.is_valid():
 		_camera_return_tween.kill()
 	var target_size: float = _get_effective_cam_size(false)
+	var target_pos: Vector3 = _get_camera_base_pos(false)
 	_camera_return_tween = create_tween()
 	_camera_return_tween.tween_interval(delay_sec)
 	_camera_return_tween.tween_callback(func() -> void:
@@ -378,7 +444,7 @@ func _schedule_camera_overview_return(delay_sec: float = 0.55) -> void:
 		_camera_tween.set_parallel(true)
 		_camera_tween.set_trans(Tween.TRANS_CUBIC)
 		_camera_tween.set_ease(Tween.EASE_IN_OUT)
-		_camera_tween.tween_property(_camera, "position", ISO_CAM_POS, 0.52)
+		_camera_tween.tween_property(_camera, "position", target_pos, 0.52)
 		_camera_tween.tween_property(_camera, "size", target_size, 0.52)
 	)
 
@@ -391,7 +457,7 @@ func set_camera_2d_mode(to_2d: bool, animate: bool = true) -> void:
 		_apply_camera_pose_immediate(to_2d)
 		return
 
-	var target_pos: Vector3 = TOP_CAM_POS if to_2d else ISO_CAM_POS
+	var target_pos: Vector3 = _get_camera_base_pos(to_2d)
 	var target_quat: Quaternion = _get_top_quaternion() if to_2d else _get_iso_quaternion()
 	var target_size: float = _get_effective_cam_size(to_2d)
 
@@ -1295,16 +1361,43 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		var mm: InputEventMouseMotion = event
+		if _is_panning_camera:
+			var delta_px: Vector2 = mm.position - _pan_last_mouse_pos
+			_pan_last_mouse_pos = mm.position
+			pan_camera_by_screen_delta(delta_px)
+			return
 		var hit_idx: int = _raycast_tile_at_screen_pos(mm.position)
 		_set_hovered_tile(hit_idx)
 	elif event is InputEventMouseButton:
 		var mb: InputEventMouseButton = event
-		if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
-			var hit_idx: int = _raycast_tile_at_screen_pos(mb.position)
-			if hit_idx >= 0:
-				tile_clicked.emit(hit_idx)
-			elif _is_point_over_center_dice_screen(mb.position):
-				dice_clicked.emit()
+		if mb.button_index == MOUSE_BUTTON_WHEEL_UP and mb.pressed:
+			zoom_camera(0.90, false)
+			return
+		if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
+			zoom_camera(1.11, false)
+			return
+		if mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
+			_is_panning_camera = mb.pressed
+			_pan_last_mouse_pos = mb.position
+			return
+		if mb.button_index == MOUSE_BUTTON_LEFT:
+			if mb.pressed:
+				var hit_idx: int = _raycast_tile_at_screen_pos(mb.position)
+				if hit_idx >= 0:
+					tile_clicked.emit(hit_idx)
+				elif _is_point_over_center_dice_screen(mb.position):
+					dice_clicked.emit()
+				else:
+					_is_panning_camera = true
+					_pan_last_mouse_pos = mb.position
+			else:
+				_is_panning_camera = false
+	elif event is InputEventMagnifyGesture:
+		var mg: InputEventMagnifyGesture = event
+		zoom_camera(1.0 / clampf(mg.factor, 0.75, 1.35), false)
+	elif event is InputEventPanGesture:
+		var pg: InputEventPanGesture = event
+		pan_camera_by_screen_delta(-pg.delta * 26.0)
 
 func _is_point_over_center_dice_screen(local_pos: Vector2) -> bool:
 	if _camera == null or _sub_viewport == null or _viewport_container == null:
@@ -2173,10 +2266,10 @@ func animate_token_move(player_id: int, from_pos: int, steps: int, players: Arra
 		var mid_pos: Vector3 = start_pos.lerp(target_pos, 0.5)
 		mid_pos.y = TILE_TOP_Y + 0.72
 
-		# Câmera dinâmica acompanha suavemente o peão na Vista Isométrica (nunca interfere na Conferência 2D)
+		# Câmera dinâmica acompanha bem de perto o peão na Vista Isométrica (nunca interfere na Conferência 2D)
 		if not _is_2d_view and _camera_follow_enabled:
 			var is_last_hop: bool = (hop_idx == total_hops - 1)
-			_focus_camera_on_world_pos(target_pos, 0.72 if is_last_hop else 0.78, 0.22 if is_last_hop else 0.18)
+			_focus_camera_on_world_pos(target_pos, 0.48 if is_last_hop else 0.54, 0.22 if is_last_hop else 0.18)
 
 		var tw: Tween = create_tween()
 		_register_tween(tw)

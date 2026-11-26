@@ -300,6 +300,8 @@ func _setup_visuals() -> void:
 	hud.camera_toggle_requested.connect(toggle_camera_view)
 	hud.camera_follow_toggle_requested.connect(_on_camera_follow_toggled)
 	hud.camera_reset_requested.connect(_on_camera_reset_requested)
+	hud.camera_zoom_in_requested.connect(_on_camera_zoom_in_requested)
+	hud.camera_zoom_out_requested.connect(_on_camera_zoom_out_requested)
 	hud.inspect_tile_requested.connect(_on_tile_inspected)
 	hud.player_inspected.connect(_on_player_inspected)
 	hud.board_layout_updated.connect(_on_board_layout_updated)
@@ -473,6 +475,14 @@ func _on_camera_follow_toggled() -> void:
 func _on_camera_reset_requested() -> void:
 	if board_view != null:
 		board_view.reset_camera_framing(true)
+
+func _on_camera_zoom_in_requested() -> void:
+	if board_view != null:
+		board_view.zoom_in()
+
+func _on_camera_zoom_out_requested() -> void:
+	if board_view != null:
+		board_view.zoom_out()
 
 func toggle_camera_view() -> void:
 	if board_view == null:

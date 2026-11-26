@@ -24,6 +24,8 @@ signal quit_game_requested
 signal camera_toggle_requested
 signal camera_follow_toggle_requested
 signal camera_reset_requested
+signal camera_zoom_in_requested
+signal camera_zoom_out_requested
 signal inspect_tile_requested(tile_index: int)
 signal player_inspected(player_id: int)
 signal board_layout_updated(board_rect: Rect2)
@@ -56,6 +58,8 @@ var _board_quick_bar: PanelContainer
 var _btn_camera: Button
 var _btn_cam_follow: Button
 var _btn_cam_reset: Button
+var _btn_zoom_out: Button
+var _btn_zoom_in: Button
 var _btn_help: Button
 var _btn_settings: Button
 var _btn_sound: Button
@@ -147,6 +151,7 @@ var _cart_draft_levels: Dictionary[int, int] = {}
 var _cart_focus_group: String = ""
 
 var _trade_overlay: Control
+var _trade_card: PanelContainer
 var _trade_target_select: OptionButton
 var _trade_offer_select: OptionButton
 var _trade_request_select: OptionButton
@@ -183,6 +188,7 @@ var _pause_forfeit_btn: Button
 var _pause_menu_btn: Button
 var _pause_quit_btn: Button
 var _help_overlay: Control
+var _help_card: PanelContainer
 
 var _victory_overlay: Control
 var _victory_banner: PanelContainer
@@ -665,6 +671,22 @@ func _build_ui() -> void:
 	_apply_button_theme(_btn_cam_reset, "#1A2721", "#253830", "#121C17", "#4D695B", Color("#E6F0EA"), false, qb_h, qb_fs, 10.0, true)
 	_btn_cam_reset.pressed.connect(func() -> void: camera_reset_requested.emit())
 	qb_row.add_child(_btn_cam_reset)
+
+	_btn_zoom_out = Button.new()
+	_btn_zoom_out.text = "-"
+	_btn_zoom_out.tooltip_text = "Afastar câmera (ou use a roda do mouse)"
+	_btn_zoom_out.custom_minimum_size = Vector2(qb_h, qb_h)
+	_apply_button_theme(_btn_zoom_out, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 2, 8.0, true)
+	_btn_zoom_out.pressed.connect(func() -> void: camera_zoom_out_requested.emit())
+	qb_row.add_child(_btn_zoom_out)
+
+	_btn_zoom_in = Button.new()
+	_btn_zoom_in.text = "+"
+	_btn_zoom_in.tooltip_text = "Aproximar câmera (ou use a roda do mouse)"
+	_btn_zoom_in.custom_minimum_size = Vector2(qb_h, qb_h)
+	_apply_button_theme(_btn_zoom_in, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 2, 8.0, true)
+	_btn_zoom_in.pressed.connect(func() -> void: camera_zoom_in_requested.emit())
+	qb_row.add_child(_btn_zoom_in)
 
 	_btn_help = Button.new()
 	_btn_help.text = "Regras"
@@ -1244,6 +1266,76 @@ func _create_modal_backdrop(on_dismiss: Callable) -> Control:
 	overlay.add_child(dim)
 	return overlay
 
+func _enable_modal_drag(card: PanelContainer, handle: Control, overlay: Control = null) -> void:
+	if card == null or handle == null:
+		return
+	card.set_meta("drag_offset", Vector2.ZERO)
+	card.set_meta("drag_active", false)
+	card.set_meta("drag_last_mouse", Vector2.ZERO)
+	handle.mouse_filter = Control.MOUSE_FILTER_STOP
+	handle.mouse_default_cursor_shape = Control.CURSOR_MOVE
+	if handle.tooltip_text == "":
+		handle.tooltip_text = "Arraste para mover a janela"
+	handle.gui_input.connect(func(ev: InputEvent) -> void:
+		if ev is InputEventMouseButton:
+			var mb: InputEventMouseButton = ev
+			if mb.button_index == MOUSE_BUTTON_LEFT:
+				card.set_meta("drag_active", mb.pressed)
+				card.set_meta("drag_last_mouse", mb.global_position)
+		elif ev is InputEventMouseMotion:
+			if bool(card.get_meta("drag_active", false)):
+				var mm: InputEventMouseMotion = ev
+				var prev_pos: Variant = card.get_meta("drag_last_mouse", mm.global_position)
+				var delta: Vector2 = mm.global_position - (prev_pos as Vector2 if prev_pos is Vector2 else mm.global_position)
+				card.set_meta("drag_last_mouse", mm.global_position)
+				drag_modal_by(card, delta)
+	)
+	var center_parent: Container = card.get_parent() as Container
+	if center_parent != null:
+		center_parent.sort_children.connect(func() -> void: _apply_modal_drag_offset(card))
+	if overlay != null:
+		overlay.visibility_changed.connect(func() -> void:
+			if not overlay.visible:
+				reset_modal_drag(card)
+		)
+
+func reset_modal_drag(card: PanelContainer) -> void:
+	if card == null:
+		return
+	card.set_meta("drag_offset", Vector2.ZERO)
+	card.set_meta("drag_active", false)
+	_apply_modal_drag_offset(card)
+
+func drag_modal_by(card: PanelContainer, delta: Vector2) -> void:
+	if card == null:
+		return
+	var raw_offset: Variant = card.get_meta("drag_offset", Vector2.ZERO)
+	var cur_offset: Vector2 = raw_offset as Vector2 if raw_offset is Vector2 else Vector2.ZERO
+	card.set_meta("drag_offset", cur_offset + delta)
+	_apply_modal_drag_offset(card)
+
+func _apply_modal_drag_offset(card: PanelContainer) -> void:
+	if card == null:
+		return
+	var parent_ctrl: Control = card.get_parent() as Control
+	var vp_size: Vector2 = Vector2(1280.0, 720.0)
+	if parent_ctrl != null and parent_ctrl.size.x > 0.0 and parent_ctrl.size.y > 0.0:
+		vp_size = parent_ctrl.size
+	elif get_viewport() != null:
+		vp_size = get_viewport().get_visible_rect().size
+	var c_size: Vector2 = card.size
+	if c_size.x <= 1.0 or c_size.y <= 1.0:
+		c_size = card.get_combined_minimum_size()
+	var base_pos: Vector2 = (vp_size - c_size) * 0.5
+	var raw_offset: Variant = card.get_meta("drag_offset", Vector2.ZERO)
+	var offset: Vector2 = raw_offset as Vector2 if raw_offset is Vector2 else Vector2.ZERO
+	var desired: Vector2 = base_pos + offset
+	var max_x: float = maxf(8.0, vp_size.x - c_size.x - 8.0)
+	var max_y: float = maxf(8.0, vp_size.y - c_size.y - 8.0)
+	var clamped: Vector2 = Vector2(clampf(desired.x, 8.0, max_x), clampf(desired.y, 8.0, max_y))
+	card.set_meta("drag_offset", clamped - base_pos)
+	card.position = clamped
+
 # 1. Modal de Inspeção & Gestão Direta da Carta do Lote
 func _build_deed_modal() -> void:
 	_deed_overlay = _create_modal_backdrop(hide_deed_modal)
@@ -1272,6 +1364,7 @@ func _build_deed_modal() -> void:
 	banner_style.corner_radius_top_right = 16
 	_deed_banner.add_theme_stylebox_override("panel", banner_style)
 	card_vbox.add_child(_deed_banner)
+	_enable_modal_drag(_deed_card, _deed_banner, _deed_overlay)
 
 	var b_margin: MarginContainer = MarginContainer.new()
 	b_margin.add_theme_constant_override("margin_left", 22)
@@ -1665,20 +1758,20 @@ func _build_trade_modal() -> void:
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_trade_overlay.add_child(center)
 
-	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(620.0 if _is_touch_mode else 560.0, 0.0)
+	_trade_card = PanelContainer.new()
+	_trade_card.custom_minimum_size = Vector2(620.0 if _is_touch_mode else 560.0, 0.0)
 	var card_style: StyleBoxFlat = _make_panel_style("#131E18", "#4EA8DE", 18, 2)
 	card_style.shadow_size = 24
 	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.62)
-	card.add_theme_stylebox_override("panel", card_style)
-	center.add_child(card)
+	_trade_card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(_trade_card)
 
 	var margin: MarginContainer = MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 24)
 	margin.add_theme_constant_override("margin_right", 24)
 	margin.add_theme_constant_override("margin_top", 20)
 	margin.add_theme_constant_override("margin_bottom", 20)
-	card.add_child(margin)
+	_trade_card.add_child(margin)
 
 	var vbox: VBoxContainer = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 12)
@@ -1692,6 +1785,7 @@ func _build_trade_modal() -> void:
 	title.add_theme_font_size_override("font_size", _fs(19.0))
 	title.add_theme_color_override("font_color", Color("#90E0EF"))
 	vbox.add_child(title)
+	_enable_modal_drag(_trade_card, title, _trade_overlay)
 
 	var opt_h: float = _bh(40.0)
 
@@ -2178,6 +2272,7 @@ func _build_auction_modal() -> void:
 	ab_sb.corner_radius_top_right = 16
 	_auction_banner.add_theme_stylebox_override("panel", ab_sb)
 	main_vb.add_child(_auction_banner)
+	_enable_modal_drag(card, _auction_banner, _auction_overlay)
 
 	var bm: MarginContainer = MarginContainer.new()
 	bm.add_theme_constant_override("margin_left", 22)
@@ -2500,20 +2595,20 @@ func _build_help_modal() -> void:
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_help_overlay.add_child(center)
 
-	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(680.0 if _is_touch_mode else 620.0, 0.0)
+	_help_card = PanelContainer.new()
+	_help_card.custom_minimum_size = Vector2(680.0 if _is_touch_mode else 620.0, 0.0)
 	var card_style: StyleBoxFlat = _make_panel_style("#121D17", "#D4AF37", 18, 2)
 	card_style.shadow_size = 24
 	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.62)
-	card.add_theme_stylebox_override("panel", card_style)
-	center.add_child(card)
+	_help_card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(_help_card)
 
 	var margin: MarginContainer = MarginContainer.new()
 	margin.add_theme_constant_override("margin_left", 24)
 	margin.add_theme_constant_override("margin_right", 24)
 	margin.add_theme_constant_override("margin_top", 20)
 	margin.add_theme_constant_override("margin_bottom", 20)
-	card.add_child(margin)
+	_help_card.add_child(margin)
 
 	var vbox: VBoxContainer = VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 12)
@@ -2527,6 +2622,7 @@ func _build_help_modal() -> void:
 	title.add_theme_font_size_override("font_size", _fs(20.0))
 	title.add_theme_color_override("font_color", Color("#F5D06F"))
 	vbox.add_child(title)
+	_enable_modal_drag(_help_card, title, _help_overlay)
 
 	var tips_panel: PanelContainer = PanelContainer.new()
 	var tp_style: StyleBoxFlat = _make_panel_style("#0B1410", "#273C31", 12, 1)
@@ -3081,6 +3177,7 @@ func _build_settings_modal() -> void:
 	title.add_theme_font_size_override("font_size", _fs(20.0))
 	title.add_theme_color_override("font_color", Color("#F5D06F"))
 	vbox.add_child(title)
+	_enable_modal_drag(_settings_card, title, _settings_overlay)
 
 	_settings_scroll = ScrollContainer.new()
 	_settings_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3664,6 +3761,7 @@ func _build_portfolio_modal() -> void:
 	b_style.corner_radius_top_right = 16
 	_portfolio_banner.add_theme_stylebox_override("panel", b_style)
 	card_vbox.add_child(_portfolio_banner)
+	_enable_modal_drag(_portfolio_card, _portfolio_banner, _portfolio_overlay)
 
 	var bm: MarginContainer = MarginContainer.new()
 	bm.add_theme_constant_override("margin_left", 20)
@@ -4158,6 +4256,7 @@ func _build_construction_cart_modal() -> void:
 	var hdr_row: HBoxContainer = HBoxContainer.new()
 	hdr_row.add_theme_constant_override("separation", 10)
 	vbox.add_child(hdr_row)
+	_enable_modal_drag(_cart_card, hdr_row, _cart_overlay)
 
 	var title_vb: VBoxContainer = VBoxContainer.new()
 	title_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL

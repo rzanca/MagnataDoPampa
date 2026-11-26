@@ -125,14 +125,14 @@
       "id": "LOTE-14",
       "title": "Câmera Pan + Zoom, foco bem próximo no peão e Popups Arrastáveis",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Adicionar pan e zoom na câmera 3D/2D em Board3D.gd, zoom aproximado durante salto do peão e cabeçalho arrastável com clamp nos modais de GameHUD.gd."
     },
     {
       "id": "LOTE-15",
       "title": "Branding no centro do tabuleiro, 40 artes dos lotes e fundo da carta Sorte ou Azar",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Gerar fundo temático de carta, renovar centro do tabuleiro 3D com brasão oficial e atualizar as 40 ilustrações dos lotes em tools/generate_tile_art.gd."
     },
     {
