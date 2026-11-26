@@ -132,14 +132,14 @@
       "id": "LOTE-15",
       "title": "Branding no centro do tabuleiro, 40 artes dos lotes e fundo da carta Sorte ou Azar",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Gerar fundo temático de carta, renovar centro do tabuleiro 3D com brasão oficial e atualizar as 40 ilustrações dos lotes em tools/generate_tile_art.gd."
     },
     {
       "id": "LOTE-16",
       "title": "Assets 3D autorais (.glb) via Blender 5.3 headless (peões, construções, dados e enfeites)",
       "owner_agent": "01_arquiteto_hibrido.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Gerar modelos modulares .glb via Blender headless em assets/models/ e integrar no Board3D.gd com fallback seguro."
     },
     {

@@ -2966,13 +2966,36 @@ func _build_chance_card_modal() -> void:
 	_chance_player_label.add_theme_font_size_override("font_size", _fs(13.0))
 	_chance_player_label.add_theme_color_override("font_color", Color("#223026"))
 	b_vbox.add_child(_chance_player_label)
+	_enable_modal_drag(_chance_card, banner, _chance_overlay)
+
+	var body_panel: PanelContainer = PanelContainer.new()
+	var bp_style: StyleBoxFlat = StyleBoxFlat.new()
+	bp_style.bg_color = Color("#0D1913")
+	bp_style.corner_radius_bottom_left = 16
+	bp_style.corner_radius_bottom_right = 16
+	body_panel.add_theme_stylebox_override("panel", bp_style)
+	body_panel.clip_children = CanvasItem.CLIP_CHILDREN_AND_DRAW
+	card_vbox.add_child(body_panel)
+
+	if ResourceLoader.exists("res://assets/brand/chance_card_bg.jpg"):
+		var bg_tex: Texture2D = load("res://assets/brand/chance_card_bg.jpg") as Texture2D
+		if bg_tex != null:
+			var bg_rect: TextureRect = TextureRect.new()
+			bg_rect.texture = bg_tex
+			bg_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			bg_rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			bg_rect.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			bg_rect.size_flags_vertical = Control.SIZE_EXPAND_FILL
+			bg_rect.modulate = Color(0.92, 0.96, 0.92, 0.72)
+			bg_rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			body_panel.add_child(bg_rect)
 
 	var body_margin: MarginContainer = MarginContainer.new()
 	body_margin.add_theme_constant_override("margin_left", 26)
 	body_margin.add_theme_constant_override("margin_right", 26)
 	body_margin.add_theme_constant_override("margin_top", 22)
 	body_margin.add_theme_constant_override("margin_bottom", 22)
-	card_vbox.add_child(body_margin)
+	body_panel.add_child(body_margin)
 
 	var body_vbox: VBoxContainer = VBoxContainer.new()
 	body_vbox.add_theme_constant_override("separation", 14)
@@ -3001,7 +3024,8 @@ func _build_chance_card_modal() -> void:
 	_chance_effect_badge.add_child(_chance_effect_label)
 
 	var text_frame: PanelContainer = PanelContainer.new()
-	var tf_style: StyleBoxFlat = _make_panel_style("#0B1410", "#354F40", 12, 1)
+	var tf_style: StyleBoxFlat = _make_panel_style("#0B1410", "#C9A227", 12, 1)
+	tf_style.bg_color = Color(0.035, 0.070, 0.052, 0.82)
 	tf_style.content_margin_left = 18.0
 	tf_style.content_margin_right = 18.0
 	tf_style.content_margin_top = 18.0

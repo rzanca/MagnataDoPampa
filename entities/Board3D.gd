@@ -604,17 +604,45 @@ func build_board(tiles: Array[Dictionary]) -> void:
 
 	# Título central harmonizado no espaço superior do feltro
 	var center_title: Label3D = Label3D.new()
-	center_title.text = "MAGNATA DO PAMPA\nMODO CLÁSSICO • RS"
+	center_title.text = "MAGNATA DO PAMPA\nESTÂNCIA & NEGÓCIOS • RS"
 	if _bold_font != null:
 		center_title.font = _bold_font
-	center_title.font_size = 54
-	center_title.pixel_size = 0.0102
+	center_title.font_size = 52
+	center_title.pixel_size = 0.0098
 	center_title.modulate = Color("#F5D06F")
 	center_title.outline_modulate = Color("#09110D")
 	center_title.outline_size = 7
-	center_title.position = Vector3(0.0, 0.088, -2.72)
+	center_title.position = Vector3(0.0, 0.088, -2.92)
 	center_title.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	_board_root.add_child(center_title)
+
+	# Brasão oficial central em medalhão embutido sobre o feltro
+	if ResourceLoader.exists("res://assets/brand/magnata_emblem.png"):
+		var emblem_tex: Texture2D = load("res://assets/brand/magnata_emblem.png") as Texture2D
+		if emblem_tex != null:
+			var rim_mesh: MeshInstance3D = MeshInstance3D.new()
+			var rim_cyl: CylinderMesh = CylinderMesh.new()
+			rim_cyl.top_radius = 1.24
+			rim_cyl.bottom_radius = 1.28
+			rim_cyl.height = 0.022
+			rim_cyl.radial_segments = 36
+			rim_mesh.mesh = rim_cyl
+			rim_mesh.position = Vector3(0.0, 0.078, -0.92)
+			rim_mesh.material_override = _make_material(Color("#D4AF37"), 0.32, 0.55)
+			_board_root.add_child(rim_mesh)
+
+			var disc_mesh: MeshInstance3D = MeshInstance3D.new()
+			var disc_plane: PlaneMesh = PlaneMesh.new()
+			disc_plane.size = Vector2(2.22, 2.22)
+			disc_mesh.mesh = disc_plane
+			disc_mesh.position = Vector3(0.0, 0.092, -0.92)
+			var emb_mat: StandardMaterial3D = StandardMaterial3D.new()
+			emb_mat.albedo_texture = emblem_tex
+			emb_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			emb_mat.roughness = 0.42
+			emb_mat.metallic = 0.08
+			disc_mesh.material_override = emb_mat
+			_board_root.add_child(disc_mesh)
 
 	# 40 casas orientadas a dados
 	for i: int in range(tiles.size()):
@@ -2448,6 +2476,11 @@ func _build_center_chance_deck() -> void:
 	_deck_root.add_child(pad)
 
 	var card_back_mat: StandardMaterial3D = _make_material(Color("#1A4737"), 0.44, 0.14)
+	if ResourceLoader.exists("res://assets/brand/chance_card_bg.jpg"):
+		var bg_tex: Texture2D = load("res://assets/brand/chance_card_bg.jpg") as Texture2D
+		if bg_tex != null:
+			card_back_mat.albedo_texture = bg_tex
+			card_back_mat.albedo_color = Color(1.0, 1.0, 1.0, 1.0)
 	var card_edge_mat: StandardMaterial3D = _make_material(Color("#F4EFE4"), 0.65, 0.0)
 	var stack_layers: int = 7
 	for layer_i: int in range(stack_layers):

@@ -1,17 +1,8 @@
-@tool
-extends EditorScript
+extends RefCounted
 
 const IMG_SIZE: int = 256
 const OUTPUT_DIR: String = "res://assets/tiles"
 const BOARD_DATA_PATH: String = "res://data/board_data.json"
-
-func _run() -> void:
-	var count: int = generate_all_tiles()
-	print("[TileArtGenerator] %d cenários temáticos full-bleed gerados em %s." % [count, OUTPUT_DIR])
-	if Engine.is_editor_hint():
-		var fs: EditorFileSystem = EditorInterface.get_resource_filesystem()
-		if fs != null:
-			fs.scan()
 
 func generate_all_tiles() -> int:
 	var file: FileAccess = FileAccess.open(BOARD_DATA_PATH, FileAccess.READ)
@@ -76,12 +67,18 @@ func _render_tile_art(tile: Dictionary, art_id: String) -> Image:
 	# Composição cenográfica completa de ponta a ponta
 	_draw_motif(img, art_id, accent)
 
-	# Vinheta inferior sutil para fundir harmoniosamente com o rodapé escuro da casa 3D
-	_draw_bottom_scrim(img, Color("#0E1512"), 56)
+	# Vinheta inferior e superior sutil para harmonizar com a moldura do tabuleiro 3D
+	_draw_bottom_scrim(img, Color("#0C1611"), 62)
 
-	# Apenas nos 4 cantos especiais, aplica um filete dourado interno sutil (sem caixa grossa)
-	if art_id == "tile_galpao_central" or art_id == "tile_xadrez" or art_id == "tile_feriadao_20_setembro" or art_id == "tile_va_para_xadrez":
-		_draw_rounded_border(img, 7.0, 7.0, 242.0, 242.0, 12.0, 3.0, Color(0.92, 0.76, 0.36, 0.78))
+	# Identidade visual moderna do Pampa: moldura esmeralda escura + filete dourado unificado
+	_draw_rounded_border(img, 3.0, 3.0, 250.0, 250.0, 14.0, 3.5, Color(0.06, 0.11, 0.08, 0.82))
+	var is_corner_tile: bool = (art_id == "tile_galpao_central" or art_id == "tile_xadrez" or art_id == "tile_feriadao_20_setembro" or art_id == "tile_va_para_xadrez")
+	var gold_alpha: float = 0.88 if (is_corner_tile or tile_type == "COMPANY" or tile_type == "CHANCE") else 0.54
+	_draw_rounded_border(img, 7.0, 7.0, 242.0, 242.0, 12.0, 2.2 if not is_corner_tile else 3.0, Color(0.88, 0.73, 0.30, gold_alpha))
+	if is_corner_tile or tile_type == "CHANCE":
+		var gem_col: Color = Color(0.95, 0.80, 0.38, 0.85)
+		_draw_diamond_aa(img, 20.0, 20.0, 5.0, 5.0, gem_col)
+		_draw_diamond_aa(img, 236.0, 20.0, 5.0, 5.0, gem_col)
 
 	return img
 
