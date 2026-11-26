@@ -277,7 +277,7 @@ func set_viewport_rect(rect: Rect2) -> void:
 	if _frame_panel != null:
 		_frame_panel.position = viewport_position
 		_frame_panel.size = viewport_size
-	if _sub_viewport != null:
+	if _sub_viewport != null and (_viewport_container == null or not _viewport_container.stretch):
 		var target_w: int = maxi(320, roundi(viewport_size.x - 8.0))
 		var target_h: int = maxi(240, roundi(viewport_size.y - 8.0))
 		if _sub_viewport.size.x != target_w or _sub_viewport.size.y != target_h:
@@ -287,7 +287,9 @@ func set_viewport_rect(rect: Rect2) -> void:
 
 func _get_effective_cam_size(to_2d: bool) -> float:
 	var aspect: float = 1.36
-	if _sub_viewport != null and _sub_viewport.size.y > 0:
+	if viewport_size.y > 0.0:
+		aspect = maxf(320.0, viewport_size.x - 8.0) / maxf(240.0, viewport_size.y - 8.0)
+	elif _sub_viewport != null and _sub_viewport.size.y > 0:
 		aspect = float(_sub_viewport.size.x) / float(_sub_viewport.size.y)
 	if to_2d:
 		return maxf(TOP_CAM_SIZE, 15.6 / maxf(0.5, aspect))

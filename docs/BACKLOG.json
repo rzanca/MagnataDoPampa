@@ -27,7 +27,7 @@
       "id": "TASK-04",
       "title": "Rodar validação headless, corrigir falhas de script/cena e comitar no Git",
       "owner_agent": "04_qa_devops.md",
-      "status": "pending",
+      "status": "done",
       "notes": "Executar apenas uma instância do Godot por vez no Ryzen 7 5700G com 16GB de RAM."
     }
   ]
