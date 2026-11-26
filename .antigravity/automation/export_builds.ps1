@@ -25,8 +25,8 @@ $ErrorActionPreference = "Stop"
 $ScriptDir     = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir    = Split-Path -Parent (Split-Path -Parent $ScriptDir)
 $WorkspaceRoot = Split-Path -Parent $ProjectDir
-$LauncherDir   = Join-Path $WorkspaceRoot "launcher"
-$BuildsRoot    = Join-Path $WorkspaceRoot "builds"
+$LauncherDir   = Join-Path $ProjectDir "tools\launcher"
+$BuildsRoot    = Join-Path $ProjectDir "builds"
 $LatestDir     = Join-Path $BuildsRoot "latest"
 $ReleasesDir   = Join-Path $BuildsRoot "releases"
 

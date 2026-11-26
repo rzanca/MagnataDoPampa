@@ -7,9 +7,12 @@
   - `core/BotAI.gd`: classe `RefCounted` pura (zero dependência de UI ou `SceneTree`) responsável pela tomada de decisão tática dos bots sob **5 arquétipos ocultos** (`AGRESSIVO`, `CONSERVADOR`, `MONOPOLISTA`, `IMOBILIARIO`, `ESPECULADOR`), sempre mascarados como `[BOT]` na UI, nos logs e nos snapshots de rede.
   - `core/NetworkManager.gd`: camada de rede P2P autoritativa (Host `peer_id = 1` + até `5` clientes = 2 a 6 jogadores) com suporte a **ENet (LAN/Desktop)** e **WebRTC em topologia estrela (Web)** via sinalização WebSocket.
   - `core/PlatformConfig.gd`: Autoload (`PlatformConfig`) de detecção de perfil de plataforma (`desktop` vs. `android`) com suporte a `force_mobile_ui` e variável de ambiente `MAGNATA_FORCE_MOBILE` para simulação mobile no PC.
+  - `core/SoundManager.gd`: síntese procedural local de efeitos sonoros (`AudioStreamWAV`) com pool de vozes e controles de mudo/volume/passos persistidos.
+  - `core/BuildInfo.gd`: leitor de `res://data/version.json`, comparação SemVer/build e parser opcional de `releases/latest` no GitHub.
 - **Dados Externos (`data/`):**
   - `data/board_data.json`: parâmetros econômicos base (`starting_money = 2558`, `pass_go_bonus = 200`, `bail_cost = 50`, `max_houses_bank = 32`, `max_hotels_bank = 12`) e as 40 casas do tabuleiro com campos `art_id`, `group`, `price`, `rent`, `house_cost`, `mortgage_value`.
   - `data/chance_cards.json`: baralho regional *Sorte ou Azar, Tchê!* (16 cartas).
+  - `data/version.json`: metadados oficiais de versão (`version`, `build_number`, `github_repo`, `release_notes`).
 - **Visual e Entidades (`entities/` e `assets/`):**
   - `entities/Board3D.gd`: implementação 3D isométrica principal com alternância fluida para câmera 2D de conferência, câmera dinâmica seguindo peão ativo, marcos 3D nos cantos, casas/hotéis 3D e dados animados.
   - `entities/BoardView.gd`: visualização 2D (`Node2D`) leve com contrato compatível para seleção de casas, posse, construções e posicionamento de peões.
@@ -19,9 +22,13 @@
   - `ui/shared/`: componentes visuais comuns, paleta temática gaúcha, formatadores (`R$`) e fachada de contrato compartilhado entre Desktop e Android.
   - `ui/desktop/`: perfil dedicado Desktop (`1920x1080`, mouse/teclado, atalhos rápidos `[Espaço]`, `[C]`, `[R]`, `[E]`, `[F]`, `[L]`, `[N]`, `[Tab]`, `[ESC]`, painel lateral compacto e dock de ações desktop).
   - `ui/android/`: perfil dedicado Android (toque, alvos ampliados, espaçamento confortável para telas compactas, painel lateral proporcional ao toque e ocultação de rótulos de atalhos de teclado).
-- **Ferramentas e Automação (`tools/` e `.antigravity/`):**
-  - `tools/generate_pawn_art.gd` e `tools/generate_tile_art.gd`: utilitários de geração de arte.
-  - `.antigravity/rules.md`, `.antigravity/agents/*.md`, `.antigravity/automation/preflight_check.ps1` e `.antigravity/automation/validate_and_commit.ps1`: governança multiagente, validação headless e commits no Git.
+- **Ferramentas, Launcher, Sinalização e Automação (`tools/`, `.antigravity/` e `builds/`):**
+  - `tools/generate_pawn_art.gd` e `tools/generate_tile_art.gd`: utilitários Godot de geração de arte.
+  - `tools/launcher/`: projeto Godot 4.7 separado do Launcher Inicial (`MagnataDoPampaLauncher.exe`), isolado do projeto principal via `tools/launcher/.gdignore`.
+  - `tools/signaling_server/`: servidor WebSocket Node.js (`server.mjs`) para sinalização WebRTC (ignorado pelo Godot via `.gdignore`).
+  - `tools/release/`: scripts de build/exportação (`build_release.ps1` e `configure_android_export.ps1`, isolados via `.gdignore`).
+  - `builds/`: pasta de saída local (`latest/`, `releases/`, `manifest.json`), ignorada tanto pelo Godot (`.gdignore`) quanto pelo Git (`.gitignore`).
+  - `.antigravity/rules.md`, `.antigravity/agents/*.md`, `.antigravity/automation/preflight_check.ps1`, `.antigravity/automation/export_builds.ps1` e `.antigravity/automation/validate_and_commit.ps1`: governança multiagente, validação headless, exportação e commits no Git.
 
 ---
 
@@ -118,3 +125,37 @@ A escolha de perfil de interface é controlada exclusivamente pelo Autoload `Pla
 - **Jogadores:** 2 a 6 (bots identificados apenas como `[BOT]`).
 - **Economia base:** saldo inicial `R$ 2.558`, terrenos a partir de `R$ 60`, `32` casas e `12` hotéis no banco, monopólio dobrando aluguel de terreno sem construções, companhias por `dice_sum * multiplier`, desipoteca com `+10%`, venda equilibrada de construções a `floori(float(house_cost) * 0.5)` e falência preservando regras oficiais.
 - **Qualidade:** GDScript 2.0 estritamente tipado, `0` avisos de `INTEGER_DIVISION`, execução de apenas 1 instância do Godot por vez (Ryzen 7 5700G / 16GB RAM) e validação via `.antigravity/automation/validate_and_commit.ps1`.
+
+---
+
+## 6. Árvore Oficial do Repositório Unificado e Comandos
+
+```text
+magnata-do-pampa/
+├── project.godot, export_presets.cfg, main.gd, main.tscn, .gitignore
+├── core/                  # Regras do Modo Clássico, BotAI, NetworkManager, PlatformConfig, SoundManager, BuildInfo
+├── data/                  # board_data.json, chance_cards.json, version.json
+├── entities/              # Board3D.gd, BoardView.gd
+├── ui/                    # GameHUD, SetupScreen e especializações shared/ desktop/ android/
+├── assets/                # Artes dos peões e casas
+├── addons/                # Plugins do editor
+├── docs/                  # ARCHITECTURE.md, GDD.md, BACKLOG.json
+├── .antigravity/          # Regras, perfis de agentes e automação (preflight, export_builds, validate_and_commit)
+├── tools/
+│   ├── generate_pawn_art.gd, generate_tile_art.gd
+│   ├── launcher/          # (.gdignore) Projeto Godot do Launcher Inicial (.exe)
+│   ├── signaling_server/  # (.gdignore) Servidor Node.js WebSocket WebRTC (server.mjs)
+│   └── release/           # (.gdignore) Atalhos build_release.ps1 e configure_android_export.ps1
+└── builds/                # (.gdignore + .gitignore) Artefatos gerados (.exe, .apk, .zip, manifest.json)
+```
+
+- **Preflight e Validação + Commit:**
+  - `powershell -ExecutionPolicy Bypass -File .\.antigravity\automation\preflight_check.ps1`
+  - `powershell -ExecutionPolicy Bypass -File .\.antigravity\automation\validate_and_commit.ps1 -CommitMessage "mensagem"`
+- **Exportação Automatizada (Windows + Android + Launcher):**
+  - `powershell -ExecutionPolicy Bypass -File .\tools\release\build_release.ps1 -Targets All`
+  - Flags úteis: `-BumpPatch`, `-BumpMinor`, `-NoBump`, `-GitHubRepo "usuario/repo"`, `-CopyToMdp`, `-PublishGitHubRelease`.
+- **Sinalização WebRTC local:**
+  - `node .\tools\signaling_server\server.mjs`
+- **Launcher em desenvolvimento / produção:**
+  - Código-fonte em `tools/launcher/` e executável exportado em `builds/latest/MagnataDoPampaLauncher.exe`.

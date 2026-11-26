@@ -1,4 +1,30 @@
-# Godot 4+ specific ignores
+# Godot 4+ caches & metadata
 .godot/
+**/.godot/
+*.translation
+
+# Assistentes e ferramentas locais
+.gamedev_ai/
+
+# Saidas de build e artefatos binarios (nao versionar no GitHub)
+builds/
+exports/
+*.exe
+*.apk
+*.aab
+*.zip
+*.pck
+*.idsig
 *.tmp
 *.log
+
+# Assinaturas, keystores e credenciais locais
+*.keystore
+*.jks
+*token*.json
+launcher_settings.json
+.env
+.env.*
+
+# Node.js / Signaling local dependencies
+tools/signaling_server/node_modules/

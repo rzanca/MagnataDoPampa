@@ -27,6 +27,19 @@ foreach ($m in $autoloads) {
     }
 }
 
+# Verifica estrutura unificada e .gdignore nas subpastas externas ao Godot principal
+foreach ($extDir in @("tools\launcher", "tools\signaling_server", "tools\release", "builds")) {
+    if (Test-Path $extDir) {
+        $gdIgnore = Join-Path $extDir ".gdignore"
+        if (-not (Test-Path $gdIgnore)) {
+            New-Item -ItemType File -Path $gdIgnore -Force | Out-Null
+            Write-Host "[AUTO-FIX] .gdignore criado em $extDir" -ForegroundColor Yellow
+        } else {
+            Write-Host "[OK] .gdignore ativo em $extDir" -ForegroundColor Green
+        }
+    }
+}
+
 # Verifica Git e processos
 $godotProcs = Get-Process | Where-Object { $_.ProcessName -match "godot" }
 if ($godotProcs) {

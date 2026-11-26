@@ -92,6 +92,13 @@
       "owner_agent": "01_arquiteto_hibrido.md",
       "status": "done",
       "notes": "Criar projeto standalone em launcher/ com consulta a releases/latest (público/privado), barra de progresso, verificação SHA-256, extração ZIPReader, substituição segura do .exe e botão Jogar."
+    },
+    {
+      "id": "LOTE-10",
+      "title": "Unificação da hierarquia do ecossistema dentro de magnata-do-pampa e blindagem para GitHub",
+      "owner_agent": "04_qa_devops.md",
+      "status": "done",
+      "notes": "Mover launcher, signaling_server, scripts de release e builds para dentro do repositório principal com .gdignore nas subpastas externas, atualizar referências, blindar .gitignore e validar preflight + headless + commit."
     }
   ]
 }
