@@ -33,3 +33,4 @@
 - **Leilão de Escritura Própria:** Pela Carta do Lote, o dono pode colocar escritura livre de construções e sem hipoteca em leilão entre adversários (máximo 1 por turno), recebendo o valor arrematado.
 - **Desistência / Passar Vaga para `[BOT]`:** Humano local (com `>= 2` participantes ativos) ou cliente online pode passar sua vaga para `[BOT]` sem encerrar a mesa dos demais.
 - **Áudio Procedural & Controles:** `SoundManager` procedural via `AudioStreamWAV` com opções de Mudo, Volume e Sons de Passos/UI persistidas em `preferences.cfg`.
+- **Pipeline de Builds & Launcher Inicial:** Controle único de versão (`data/version.json` + `core/BuildInfo.gd`), automação PowerShell para exportação Windows (`.exe`/`.zip`) e Android (`.apk`) com checksum SHA-256 e `manifest.json`, além de **Launcher Inicial dedicado** (`launcher/`) com verificação via GitHub Releases e atualização em 1 clique.

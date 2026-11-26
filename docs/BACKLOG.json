@@ -78,6 +78,20 @@
       "owner_agent": "03_engenheiro_ui_hibrida.md",
       "status": "done",
       "notes": "Criar core/SoundManager.gd procedural (AudioStreamWAV) com controles nos Ajustes e barra rápida; clique nos dados 3D para rolar; chips de grupo navegáveis na Carta do Lote."
+    },
+    {
+      "id": "LOTE-08",
+      "title": "Automatização de exportação Windows (.exe/.zip) e Android (.apk) com versionamento e selo no jogo",
+      "owner_agent": "04_qa_devops.md",
+      "status": "done",
+      "notes": "Criar data/version.json, core/BuildInfo.gd, selo de versão + alerta de release no SetupScreen e script automatizado de build/manifest/SHA-256."
+    },
+    {
+      "id": "LOTE-09",
+      "title": "Launcher Inicial Godot (.exe) com verificação no GitHub Releases e update em 1 clique",
+      "owner_agent": "01_arquiteto_hibrido.md",
+      "status": "done",
+      "notes": "Criar projeto standalone em launcher/ com consulta a releases/latest (público/privado), barra de progresso, verificação SHA-256, extração ZIPReader, substituição segura do .exe e botão Jogar."
     }
   ]
 }

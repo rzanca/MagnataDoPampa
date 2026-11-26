@@ -13,6 +13,7 @@ signal lobby_slot_pref_requested(pawn_idx: int, color_idx: int, player_name: Str
 
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
+const BuildInfoClass = preload("res://core/BuildInfo.gd")
 
 const MAX_PLAYERS: int = 6
 const MIN_PLAYERS: int = 2
@@ -110,6 +111,11 @@ var _web_status_label: Label
 
 var _btn_start: Button
 var _quick_buttons: Array[Button] = []
+var _version_info: Dictionary = {}
+var _version_badge_label: Label
+var _update_pill_btn: Button
+var _update_target_url: String = ""
+var _update_http: HTTPRequest = null
 
 func _resolve_platform_profile() -> RefCounted:
 	return PlatformProfileAdapter.create_for_mobile_flag(PlatformProfileAdapter.resolve_is_mobile(get_tree()))
@@ -128,6 +134,7 @@ func _ready() -> void:
 	_build_ui()
 	_refresh_count_buttons()
 	_refresh_visible_slots()
+	call_deferred("_check_for_updates_async")
 	var vp: Viewport = get_viewport()
 	if vp != null:
 		vp.size_changed.connect(_on_viewport_size_changed)
@@ -306,6 +313,25 @@ func _build_ui() -> void:
 	subtitle_lbl.add_theme_font_size_override("font_size", roundi(13.0 * f_scale))
 	subtitle_lbl.add_theme_color_override("font_color", Color("#A7C2B2"))
 	title_vbox.add_child(subtitle_lbl)
+
+	_version_info = BuildInfoClass.load_version_info()
+	var version_row: HBoxContainer = HBoxContainer.new()
+	version_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	version_row.add_theme_constant_override("separation", 10)
+	title_vbox.add_child(version_row)
+
+	_version_badge_label = Label.new()
+	_version_badge_label.text = "Build %s" % BuildInfoClass.get_display_version(_version_info)
+	_version_badge_label.add_theme_font_size_override("font_size", roundi(11.5 * f_scale))
+	_version_badge_label.add_theme_color_override("font_color", Color("#8FA899"))
+	version_row.add_child(_version_badge_label)
+
+	_update_pill_btn = Button.new()
+	_update_pill_btn.visible = false
+	_update_pill_btn.text = "Atualização disponível"
+	_style_button(_update_pill_btn, "#1F4731", "#2B6143", "#163323", "#52B788", Color("#E8FFF2"), roundi(11.5 * f_scale), Vector2(180.0, 26.0 if not _is_touch_mode else 32.0), 8, 1)
+	_update_pill_btn.pressed.connect(_on_update_pill_pressed)
+	version_row.add_child(_update_pill_btn)
 
 	var btn_help: Button = Button.new()
 	btn_help.text = "Regras"
@@ -1597,3 +1623,54 @@ func apply_remote_lobby_snapshot(lobby_data: Dictionary, local_peer_id: int) -> 
 	_refresh_exclusive_choices()
 	_updating_slots = false
 	_refresh_start_cta_for_network()
+
+func get_version_badge_text() -> String:
+	if _version_badge_label != null:
+		return _version_badge_label.text
+	return "Build %s" % BuildInfoClass.get_display_version(_version_info)
+
+func _check_for_updates_async() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var repo: String = str(_version_info.get("github_repo", "")).strip_edges()
+	if repo == "" or not repo.contains("/"):
+		return
+	if _update_http == null:
+		_update_http = HTTPRequest.new()
+		_update_http.timeout = 6.0
+		_update_http.request_completed.connect(_on_update_http_completed)
+		add_child(_update_http)
+	var api_url: String = "https://api.github.com/repos/%s/releases/latest" % repo
+	var headers: PackedStringArray = PackedStringArray([
+		"Accept: application/vnd.github+json",
+		"User-Agent: MagnataDoPampaGame"
+	])
+	_update_http.request(api_url, headers)
+
+func _on_update_http_completed(result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray) -> void:
+	if result != HTTPRequest.RESULT_SUCCESS or response_code != 200:
+		return
+	var parsed: Variant = JSON.parse_string(body.get_string_from_utf8())
+	if not (parsed is Dictionary):
+		return
+	var cur_ver: String = str(_version_info.get("version", "0.8.0"))
+	var cur_build: int = int(_version_info.get("build_number", 0))
+	var rel: Dictionary = BuildInfoClass.parse_github_release_payload(parsed as Dictionary, cur_ver, cur_build)
+	if not bool(rel.get("has_update", false)):
+		return
+	var rem_ver: String = str(rel.get("version", ""))
+	var target_url: String = str(rel.get("html_url", ""))
+	if OS.get_name() == "Android":
+		var apk_d: Variant = rel.get("android_apk_asset", {})
+		if apk_d is Dictionary and str((apk_d as Dictionary).get("download_url", "")) != "":
+			target_url = str((apk_d as Dictionary).get("download_url", ""))
+	if target_url == "":
+		return
+	_update_target_url = target_url
+	if _update_pill_btn != null:
+		_update_pill_btn.text = "Nova v%s disponível ↗" % rem_ver
+		_update_pill_btn.visible = true
+
+func _on_update_pill_pressed() -> void:
+	if _update_target_url != "":
+		OS.shell_open(_update_target_url)
