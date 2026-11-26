@@ -1,6 +1,8 @@
 extends Node2D
 
 signal tile_clicked(tile_index: int)
+signal dice_clicked
+signal hop_step_played
 
 @export var viewport_position: Vector2 = Vector2(18.0, 18.0)
 @export var viewport_size: Vector2 = Vector2(1426.0, 1044.0)
@@ -1301,6 +1303,28 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 			var hit_idx: int = _raycast_tile_at_screen_pos(mb.position)
 			if hit_idx >= 0:
 				tile_clicked.emit(hit_idx)
+			elif _is_point_over_center_dice_screen(mb.position):
+				dice_clicked.emit()
+
+func _is_point_over_center_dice_screen(local_pos: Vector2) -> bool:
+	if _camera == null or _sub_viewport == null or _viewport_container == null:
+		return false
+	var c_size: Vector2 = _viewport_container.size
+	var vp_pos: Vector2 = local_pos
+	if c_size.x > 1.0 and c_size.y > 1.0:
+		vp_pos = Vector2(
+			local_pos.x * float(_sub_viewport.size.x) / c_size.x,
+			local_pos.y * float(_sub_viewport.size.y) / c_size.y
+		)
+	var origin: Vector3 = _camera.project_ray_origin(vp_pos)
+	var dir: Vector3 = _camera.project_ray_normal(vp_pos)
+	var dice_plane: Plane = Plane(Vector3.UP, 0.35)
+	var hit: Variant = dice_plane.intersects_ray(origin, dir)
+	if not (hit is Vector3):
+		return false
+	var hit_vec: Vector3 = hit
+	var pt_xz: Vector2 = Vector2(hit_vec.x, hit_vec.z)
+	return Rect2(-3.35, 0.05, 2.95, 2.25).has_point(pt_xz)
 
 func _on_viewport_mouse_exited() -> void:
 	_set_hovered_tile(-1)
@@ -2164,6 +2188,7 @@ func animate_token_move(player_id: int, from_pos: int, steps: int, players: Arra
 		tw.chain().tween_property(token, "position:y", target_pos.y, 0.095).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
 		tw.parallel().tween_property(token, "scale", Vector3(1.06, 0.93, 1.06), 0.075).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		tw.chain().tween_property(token, "scale", Vector3.ONE, 0.045).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		hop_step_played.emit()
 		await tw.finished
 		if expected_token != _anim_token or not is_inside_tree():
 			if _moving_player_id == player_id:

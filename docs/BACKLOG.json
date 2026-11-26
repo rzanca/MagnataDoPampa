@@ -76,7 +76,7 @@
       "id": "LOTE-07",
       "title": "Áudio procedural com controles e interatividade UI/UX avançada no tabuleiro e Carta",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Criar core/SoundManager.gd procedural (AudioStreamWAV) com controles nos Ajustes e barra rápida; clique nos dados 3D para rolar; chips de grupo navegáveis na Carta do Lote."
     }
   ]

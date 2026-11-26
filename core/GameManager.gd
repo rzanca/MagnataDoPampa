@@ -17,6 +17,7 @@ const DesktopSetupScreenClass = preload("res://ui/desktop/DesktopSetupScreen.gd"
 const AndroidSetupScreenClass = preload("res://ui/android/AndroidSetupScreen.gd")
 const BotAIClass = preload("res://core/BotAI.gd")
 const NetworkManagerClass = preload("res://core/NetworkManager.gd")
+const SoundManagerClass = preload("res://core/SoundManager.gd")
 
 const BOT_ACTION_DELAY: float = 0.45
 const BOT_MAX_ACTIONS_PER_TURN: int = 32
@@ -64,6 +65,7 @@ var hud: GameHUDClass = null
 var setup_screen: SetupScreenClass = null
 var bot_ai: BotAIClass = BotAIClass.new()
 var network: NetworkManagerClass = null
+var sound_manager: SoundManagerClass = null
 
 var _active_net_session_id: int = 0
 var _applying_remote_state: bool = false
@@ -94,6 +96,9 @@ var _preferences: Dictionary = {
 	"ui_comfort_scale": "normal",
 	"show_event_toasts": true,
 	"auction_interval_rounds": 3,
+	"audio_enabled": true,
+	"audio_volume": 0.75,
+	"audio_step_sfx": true,
 	"player_chance_overrides": {}
 }
 
@@ -243,6 +248,13 @@ func _setup_visuals() -> void:
 	add_child(board_view)
 	board_view.build_board(tiles)
 	board_view.tile_clicked.connect(_on_tile_inspected)
+	board_view.dice_clicked.connect(_on_human_roll_pressed)
+	board_view.hop_step_played.connect(_on_board_hop_step_played)
+
+	sound_manager = SoundManagerClass.new()
+	sound_manager.name = "SoundManager"
+	add_child(sound_manager)
+	sound_manager.apply_preferences(_preferences)
 
 	var use_mobile_ui: bool = _is_mobile_platform_active()
 	if use_mobile_ui:
@@ -345,15 +357,23 @@ func _load_preferences() -> void:
 	_preferences["camera_follow"] = bool(cfg.get_value("visual", "camera_follow", true))
 	_preferences["ui_comfort_scale"] = str(cfg.get_value("visual", "ui_comfort_scale", "normal"))
 	_preferences["show_event_toasts"] = bool(cfg.get_value("visual", "show_event_toasts", true))
+	_preferences["auction_interval_rounds"] = int(cfg.get_value("gameplay", "auction_interval_rounds", 3))
+	_preferences["audio_enabled"] = bool(cfg.get_value("audio", "audio_enabled", true))
+	_preferences["audio_volume"] = clampf(float(cfg.get_value("audio", "audio_volume", 0.75)), 0.0, 1.0)
+	_preferences["audio_step_sfx"] = bool(cfg.get_value("audio", "audio_step_sfx", true))
 
 func _save_preferences() -> void:
 	var cfg: ConfigFile = ConfigFile.new()
 	cfg.set_value("gameplay", "chance_close_mode", str(_preferences.get("chance_close_mode", "auto")))
 	cfg.set_value("gameplay", "chance_auto_duration", str(_preferences.get("chance_auto_duration", "default")))
 	cfg.set_value("gameplay", "bot_speed", str(_preferences.get("bot_speed", "normal")))
+	cfg.set_value("gameplay", "auction_interval_rounds", int(_preferences.get("auction_interval_rounds", 3)))
 	cfg.set_value("visual", "camera_follow", bool(_preferences.get("camera_follow", true)))
 	cfg.set_value("visual", "ui_comfort_scale", str(_preferences.get("ui_comfort_scale", "normal")))
 	cfg.set_value("visual", "show_event_toasts", bool(_preferences.get("show_event_toasts", true)))
+	cfg.set_value("audio", "audio_enabled", bool(_preferences.get("audio_enabled", true)))
+	cfg.set_value("audio", "audio_volume", clampf(float(_preferences.get("audio_volume", 0.75)), 0.0, 1.0))
+	cfg.set_value("audio", "audio_step_sfx", bool(_preferences.get("audio_step_sfx", true)))
 	var _save_err: Error = cfg.save(PREFS_FILE_PATH)
 
 func _on_settings_updated(new_prefs: Dictionary) -> void:
@@ -363,10 +383,19 @@ func _on_settings_updated(new_prefs: Dictionary) -> void:
 	var cam_follow: bool = bool(_preferences.get("camera_follow", true))
 	if board_view != null:
 		board_view.set_camera_follow_enabled(cam_follow)
+	if sound_manager != null:
+		sound_manager.apply_preferences(_preferences)
 	if hud != null:
 		hud.set_camera_follow_label(cam_follow)
 		hud.apply_preferences(_preferences)
 	_save_preferences()
+
+func _play_sfx(event_name: String) -> void:
+	if sound_manager != null:
+		sound_manager.play_sfx(event_name)
+
+func _on_board_hop_step_played() -> void:
+	_play_sfx("hop")
 
 func _get_bot_action_delay() -> float:
 	var speed_key: String = str(_preferences.get("bot_speed", "normal"))
@@ -637,6 +666,21 @@ func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 		is_owner_active
 		and _can_auction_owned_tile(active_pid, tile_idx)
 	)
+	var group_peers: Array[Dictionary] = []
+	if tile_type == "PROPERTY" and group_name != "":
+		for g_tid: int in _get_group_tile_indices(group_name):
+			var g_tile: Dictionary = tiles[g_tid]
+			var g_owned: bool = property_owners.has(g_tid)
+			var g_owner_id: int = property_owners.get(g_tid, -1)
+			var g_owner_col: Color = board_view.get_player_color(g_owner_id) if (g_owned and board_view != null) else Color("#3A4D43")
+			group_peers.append({
+				"tile_index": g_tid,
+				"name": str(g_tile.get("name", "Lote %d" % g_tid)),
+				"is_current": (g_tid == tile_idx),
+				"is_owned": g_owned,
+				"owner_id": g_owner_id,
+				"owner_color_hex": "#" + g_owner_col.to_html(false)
+			})
 
 	var can_build: bool = is_owner_active and _can_build_on(active_pid, tile_idx)
 	var build_label: String = "+Casa"
@@ -684,7 +728,8 @@ func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 		"can_offer_in_trade": can_offer_in_trade,
 		"can_propose_trade": can_trade_this_tile,
 		"can_open_build_cart": can_cart_this_tile,
-		"can_auction_owned": can_auction_owned
+		"can_auction_owned": can_auction_owned,
+		"group_peers": group_peers
 	}
 
 func _on_tile_inspected(tile_idx: int) -> void:
@@ -1954,6 +1999,7 @@ func build_on_property(tile_idx: int) -> void:
 	if board_view != null:
 		board_view.update_buildings(property_buildings)
 		_broadcast_tile_pulse(tile_idx, Color("#FFD166"), "HOTEL!" if current_lvl == 4 else "+1 CASA")
+	_play_sfx("build")
 	_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("positive")
@@ -1994,6 +2040,7 @@ func sell_building_on_property(tile_idx: int) -> void:
 
 	if board_view != null:
 		board_view.update_buildings(property_buildings)
+	_play_sfx("mortgage")
 	_check_post_liquidation_bankruptcy(player)
 	if current_state != TurnState.GAME_OVER:
 		_sync_hud()
@@ -2104,7 +2151,7 @@ func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
 
 	if board_view != null:
 		board_view.update_buildings(property_buildings)
-
+	_play_sfx("build" if net_cost >= 0 else "mortgage")
 	var verb_txt: String = "investiu R$ %d" % net_cost if net_cost >= 0 else "recebeu R$ %d em demolicoes" % absi(net_cost)
 	_log_both("%s confirmou carrinho de obras (%d lotes atualizados, %s)." % [str(player["name"]), changes_count, verb_txt])
 	_check_post_liquidation_bankruptcy(player)
@@ -2142,6 +2189,7 @@ func toggle_mortgage(tile_idx: int) -> void:
 
 	if board_view != null:
 		board_view.update_ownership(property_owners, mortgaged_tiles)
+	_play_sfx("build" if was_mortgaged else "mortgage")
 	_check_post_liquidation_bankruptcy(player)
 	if current_state != TurnState.GAME_OVER:
 		_sync_hud()
@@ -2209,6 +2257,7 @@ func roll_dice() -> void:
 	_last_dice_sum = total
 	_has_extra_roll = false
 	_last_tile_summary = "%s arremessou os dados..." % str(player["name"])
+	_play_sfx("roll")
 	_sync_hud()
 
 	if _is_network_host():
@@ -2386,6 +2435,7 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 						var owner_name: String = str(owner.get("name", "Banco"))
 						_last_tile_summary = "Pagou R$ %d de aluguel em %s para %s!" % [rent_amount, str(tile["name"]), owner_name]
 						_log_both(_last_tile_summary)
+						_play_sfx("pay")
 						if board_view != null:
 							board_view.play_tile_pulse(pos, Color("#FF6B6B"), "-R$ %d" % rent_amount)
 						if hud != null:
@@ -2400,6 +2450,7 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 				_last_creditor_id = -1
 			_last_tile_summary = "%s: pagou R$ %d." % [str(tile["name"]), tax]
 			_log_both(_last_tile_summary)
+			_play_sfx("pay")
 			if board_view != null:
 				board_view.play_tile_pulse(pos, Color("#FF6B6B"), "-R$ %d" % tax)
 			if hud != null:
@@ -2423,6 +2474,7 @@ func _trigger_20_setembro_event(player: Dictionary, pos: int) -> void:
 	# 1. Havendo lote livre e quórum (>=2 solventes), convoca Acampamento de Remates (Leilão Farroupilha) imediato.
 	# 2. Caso contrário, promove o Rateio de Chimarrão no Galpão (+R$ 20 por adversário solvente, soma zero).
 	var p_name: String = str(player.get("name", "Estanceiro"))
+	_play_sfx("festival")
 	if board_view != null:
 		_broadcast_tile_pulse(pos, Color("#22C55E"), "20 DE SETEMBRO!")
 	current_state = TurnState.MANAGEMENT
@@ -2509,6 +2561,8 @@ func _draw_chance_card(player: Dictionary) -> void:
 			return
 
 	var effect_info: Dictionary = _describe_chance_card_effect(card)
+	var eff_tone: String = str(effect_info.get("tone", "chance"))
+	_play_sfx("chance_bad" if (eff_tone == "negative" or eff_tone == "jail") else "chance_good")
 	if _is_network_host():
 		network.broadcast_match_event(_active_net_session_id, "CHANCE_CARD", {
 			"player_name": str(player.get("name", "Estanceiro")),
@@ -2730,8 +2784,11 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 			active_count += 1
 			winner_player = p
 
+	if active_count > 1:
+		_play_sfx("bankrupt")
 	if active_count <= 1:
 		current_state = TurnState.GAME_OVER
+		_play_sfx("victory")
 		_match_session_token += 1
 		_bot_turn_token += 1
 		_is_bot_thinking = false
@@ -2791,6 +2848,7 @@ func buy_current_property() -> void:
 	_selected_property_tile = pos
 	_last_tile_summary = "%s comprou %s por R$ %d!" % [str(player["name"]), str(tile["name"]), price]
 	_log_both(_last_tile_summary)
+	_play_sfx("buy")
 	property_purchased.emit(int(player["id"]), pos, price)
 	if board_view != null:
 		board_view.update_ownership(property_owners, mortgaged_tiles)
@@ -3289,6 +3347,7 @@ func submit_auction_bid(bidder_id: int, bid_amount: int) -> void:
 	_auction_state["highest_bidder_name"] = "%s [BOT]" % str(bidder["name"]) if bool(bidder.get("is_bot", false)) else str(bidder["name"])
 
 	_log_both("Leilão: %s cobriu para R$ %d!" % [str(_auction_state["highest_bidder_name"]), bid_amount])
+	_play_sfx("auction_bid")
 	_advance_auction_turn(bidder_id)
 
 func pass_auction_turn(bidder_id: int) -> void:
@@ -3375,6 +3434,7 @@ func _finalize_auction() -> void:
 			if not (tile_idx in w_props):
 				w_props.append(tile_idx)
 			property_purchased.emit(winner_id, tile_idx, winning_bid)
+			_play_sfx("auction_win")
 			if seller_id >= 0:
 				_log_both("Martelo batido! %s comprou %s de %s em leilão por R$ %d!" % [str(winner["name"]), tile_name, str(_get_player_by_id(seller_id).get("name", "Vendedor")), winning_bid])
 			else:

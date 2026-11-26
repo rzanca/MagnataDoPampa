@@ -57,6 +57,7 @@ var _btn_cam_follow: Button
 var _btn_cam_reset: Button
 var _btn_help: Button
 var _btn_settings: Button
+var _btn_sound: Button
 var _btn_pause: Button
 var _toast_panel: PanelContainer
 var _toast_style: StyleBoxFlat
@@ -248,6 +249,9 @@ var _settings_cam_follow_btns: Dictionary[String, Button] = {}
 var _settings_scale_btns: Dictionary[String, Button] = {}
 var _settings_toast_btns: Dictionary[String, Button] = {}
 var _settings_auction_btns: Dictionary[String, Button] = {}
+var _settings_audio_btns: Dictionary[String, Button] = {}
+var _settings_volume_btns: Dictionary[String, Button] = {}
+var _settings_step_sfx_btns: Dictionary[String, Button] = {}
 var _settings_note_label: Label
 var _settings_card: PanelContainer
 var _settings_scroll: ScrollContainer
@@ -262,6 +266,9 @@ var _prefs_cache: Dictionary = {
 	"ui_comfort_scale": "normal",
 	"show_event_toasts": true,
 	"auction_interval_rounds": 3,
+	"audio_enabled": true,
+	"audio_volume": 0.75,
+	"audio_step_sfx": true,
 	"player_chance_overrides": {}
 }
 
@@ -669,6 +676,12 @@ func _build_ui() -> void:
 	_apply_button_theme(_btn_settings, "#1A2923", "#253B32", "#121E19", "#C9A227", Color("#F8E5A8"), false, qb_h, qb_fs, 11.0, true)
 	_btn_settings.pressed.connect(show_settings_modal)
 	qb_row.add_child(_btn_settings)
+
+	_btn_sound = Button.new()
+	_btn_sound.tooltip_text = "Ativar ou silenciar efeitos sonoros da partida"
+	_btn_sound.pressed.connect(func() -> void: _set_global_pref("audio_enabled", not bool(_prefs_cache.get("audio_enabled", true))))
+	qb_row.add_child(_btn_sound)
+	_refresh_sound_button()
 
 	_btn_pause = Button.new()
 	_btn_pause.text = "Menu"
@@ -1515,6 +1528,38 @@ func show_deed_modal(info: Dictionary) -> void:
 		_add_deed_kv_row("Hipoteca / Desipoteca (+10%)", "%s  /  %s" % [_format_brl(mortgage_val), _format_brl(redeem_cost)])
 		_deed_body_box.add_child(HSeparator.new())
 		_add_deed_ownership_rows(info)
+		var raw_peers: Variant = info.get("group_peers", [])
+		if raw_peers is Array and (raw_peers as Array).size() > 1:
+			_deed_body_box.add_child(HSeparator.new())
+			var gp_hdr: Label = Label.new()
+			gp_hdr.text = "Lotes do mesmo grupo (%s) — toque para alternar:" % group_name.replace("_", " ")
+			gp_hdr.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+			gp_hdr.add_theme_font_size_override("font_size", _fs(11.5))
+			gp_hdr.add_theme_color_override("font_color", Color("#A7C2B3"))
+			_deed_body_box.add_child(gp_hdr)
+
+			var gp_flow: HFlowContainer = HFlowContainer.new()
+			gp_flow.add_theme_constant_override("h_separation", 6)
+			gp_flow.add_theme_constant_override("v_separation", 6)
+			_deed_body_box.add_child(gp_flow)
+			for peer_var: Variant in (raw_peers as Array):
+				if not (peer_var is Dictionary):
+					continue
+				var peer: Dictionary = peer_var as Dictionary
+				var p_tid: int = int(peer.get("tile_index", -1))
+				var p_name: String = str(peer.get("name", "Lote"))
+				var p_curr: bool = bool(peer.get("is_current", false))
+				var p_owned: bool = bool(peer.get("is_owned", false))
+				var p_border: String = str(peer.get("owner_color_hex", "#4A6658")) if p_owned else "#4A6658"
+				var chip_btn: Button = Button.new()
+				chip_btn.text = "• %s" % p_name if p_curr else p_name
+				chip_btn.disabled = p_curr
+				var chip_bg: String = "#274738" if p_curr else "#14221B"
+				var chip_fg: Color = Color("#F5D06F") if p_curr else Color("#DCEBE2")
+				_apply_button_theme(chip_btn, chip_bg, "#1F372C", "#0E1813", p_border, chip_fg, p_curr, _bh(30.0), _fs(11.5), 10.0, true)
+				if not p_curr and p_tid >= 0:
+					chip_btn.pressed.connect(func() -> void: inspect_tile_requested.emit(p_tid))
+				gp_flow.add_child(chip_btn)
 	elif tile_type == "COMPANY":
 		_deed_group_label.text = "ESCRITURA DE COMPANHIA"
 		var price: int = int(tile.get("price", 0))
@@ -3282,6 +3327,102 @@ func _build_settings_modal() -> void:
 		auc_row.add_child(a_btn)
 		_settings_auction_btns[a_key] = a_btn
 
+	# --- Seção 3: Áudio & Efeitos Sonoros ---
+	var sec3: PanelContainer = PanelContainer.new()
+	var sec3_style: StyleBoxFlat = _make_panel_style("#0B1410", "#273C31", 12, 1)
+	sec3_style.content_margin_left = 14.0
+	sec3_style.content_margin_right = 14.0
+	sec3_style.content_margin_top = 12.0
+	sec3_style.content_margin_bottom = 12.0
+	sec3.add_theme_stylebox_override("panel", sec3_style)
+	content_vb.add_child(sec3)
+
+	var s3_vb: VBoxContainer = VBoxContainer.new()
+	s3_vb.add_theme_constant_override("separation", 10)
+	sec3.add_child(s3_vb)
+
+	var s3_hdr: Label = Label.new()
+	s3_hdr.text = "ÁUDIO & EFEITOS SONOROS"
+	if _bold_font != null:
+		s3_hdr.add_theme_font_override("font", _bold_font)
+	s3_hdr.add_theme_font_size_override("font_size", _fs(13.0))
+	s3_hdr.add_theme_color_override("font_color", Color("#F3C969"))
+	s3_vb.add_child(s3_hdr)
+
+	var audio_lbl: Label = Label.new()
+	audio_lbl.text = "Efeitos sonoros da partida:"
+	audio_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	audio_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s3_vb.add_child(audio_lbl)
+
+	var audio_row: HBoxContainer = HBoxContainer.new()
+	audio_row.add_theme_constant_override("separation", 8)
+	s3_vb.add_child(audio_row)
+	_settings_audio_btns.clear()
+	var audio_specs: Array[Array] = [
+		["on", "Som Ativo"],
+		["off", "Silenciado (Mudo)"]
+	]
+	for spec: Array in audio_specs:
+		var au_key: String = str(spec[0])
+		var au_val: bool = (au_key == "on")
+		var au_btn: Button = Button.new()
+		au_btn.text = str(spec[1])
+		au_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		au_btn.pressed.connect(func() -> void: _set_global_pref("audio_enabled", au_val))
+		audio_row.add_child(au_btn)
+		_settings_audio_btns[au_key] = au_btn
+
+	var vol_lbl: Label = Label.new()
+	vol_lbl.text = "Volume dos efeitos:"
+	vol_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	vol_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s3_vb.add_child(vol_lbl)
+
+	var vol_row: HBoxContainer = HBoxContainer.new()
+	vol_row.add_theme_constant_override("separation", 8)
+	s3_vb.add_child(vol_row)
+	_settings_volume_btns.clear()
+	var vol_specs: Array[Array] = [
+		["0.25", "25%"],
+		["0.50", "50%"],
+		["0.75", "75%"],
+		["1.00", "100%"]
+	]
+	for spec: Array in vol_specs:
+		var v_key: String = str(spec[0])
+		var v_val: float = float(v_key)
+		var v_btn: Button = Button.new()
+		v_btn.text = str(spec[1])
+		v_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v_btn.pressed.connect(func() -> void: _set_global_pref("audio_volume", v_val))
+		vol_row.add_child(v_btn)
+		_settings_volume_btns[v_key] = v_btn
+
+	var step_lbl: Label = Label.new()
+	step_lbl.text = "Sons sutis (passos dos peões e cliques):"
+	step_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	step_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s3_vb.add_child(step_lbl)
+
+	var step_row: HBoxContainer = HBoxContainer.new()
+	step_row.add_theme_constant_override("separation", 8)
+	s3_vb.add_child(step_row)
+	_settings_step_sfx_btns.clear()
+	var step_specs: Array[Array] = [
+		["on", "Passos e Cliques ON"],
+		["off", "Só Alertas"]
+	]
+	for spec: Array in step_specs:
+		var st_key: String = str(spec[0])
+		var st_val: bool = (st_key == "on")
+		var st_btn: Button = Button.new()
+		st_btn.text = str(spec[1])
+		st_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		st_btn.pressed.connect(func() -> void: _set_global_pref("audio_step_sfx", st_val))
+		step_row.add_child(st_btn)
+		_settings_step_sfx_btns[st_key] = st_btn
+
 	var btn_done: Button = Button.new()
 	btn_done.text = "Concluir" if _is_touch_mode else "Concluir [ESC]"
 	_apply_button_theme(btn_done, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), true, _bh(44.0), _fs(14.5), 14.0, true)
@@ -3297,6 +3438,7 @@ func apply_preferences(prefs: Dictionary) -> void:
 	_show_event_toasts = bool(_prefs_cache.get("show_event_toasts", true))
 	_cached_cam_follow = bool(_prefs_cache.get("camera_follow", true))
 	_refresh_cam_follow_button()
+	_refresh_sound_button()
 	_apply_comfort_text_scale()
 	if _settings_overlay != null and _settings_overlay.visible:
 		_refresh_settings_ui()
@@ -3464,6 +3606,22 @@ func _refresh_settings_ui() -> void:
 	var auc_interval: String = str(int(_prefs_cache.get("auction_interval_rounds", 3)))
 	for a_key: String in _settings_auction_btns.keys():
 		_style_seg_btn(_settings_auction_btns[a_key], a_key == auc_interval)
+
+	var audio_on: bool = bool(_prefs_cache.get("audio_enabled", true))
+	for au_key: String in _settings_audio_btns.keys():
+		_style_seg_btn(_settings_audio_btns[au_key], (au_key == "on") == audio_on)
+
+	var cur_vol: float = float(_prefs_cache.get("audio_volume", 0.75))
+	for v_key: String in _settings_volume_btns.keys():
+		var v_btn: Button = _settings_volume_btns[v_key]
+		v_btn.disabled = not audio_on
+		_style_seg_btn(v_btn, absf(float(v_key) - cur_vol) < 0.08)
+
+	var step_sfx_on: bool = bool(_prefs_cache.get("audio_step_sfx", true))
+	for st_key: String in _settings_step_sfx_btns.keys():
+		var st_btn: Button = _settings_step_sfx_btns[st_key]
+		st_btn.disabled = not audio_on
+		_style_seg_btn(st_btn, (st_key == "on") == step_sfx_on)
 
 # 8. Modal de Carteira / Escrituras do Estanceiro (Adversários ou Próprio Jogador)
 func _build_portfolio_modal() -> void:
@@ -4445,6 +4603,19 @@ func _refresh_cam_follow_button() -> void:
 		else:
 			_btn_cam_follow.text = "Foco Fixo"
 			_apply_button_theme(_btn_cam_follow, "#202A25", "#2B3A33", "#161E1A", "#5A6F64", Color("#BFD1C7"), false, qb_h, qb_fs, 10.0, true)
+
+func _refresh_sound_button() -> void:
+	if _btn_sound == null:
+		return
+	var qb_h: float = _bh(34.0)
+	var qb_fs: int = _fs(12.0)
+	var audio_on: bool = bool(_prefs_cache.get("audio_enabled", true))
+	if audio_on:
+		_btn_sound.text = "Som: ON"
+		_apply_button_theme(_btn_sound, "#1B362E", "#264C40", "#132620", "#52B788", Color("#D8FFE8"), false, qb_h, qb_fs, 10.0, true)
+	else:
+		_btn_sound.text = "Mudo"
+		_apply_button_theme(_btn_sound, "#2B1E1E", "#3B2828", "#1E1414", "#A44A4A", Color("#F5C2C2"), false, qb_h, qb_fs, 10.0, true)
 
 func clear_log() -> void:
 	if _log_label != null:
