@@ -161,6 +161,7 @@ func should_buy_property(player: Dictionary, tile: Dictionary, tile_index: int, 
 	var group_name: String = str(tile.get("group", ""))
 	var tiles_arr: Array[Dictionary] = _extract_tiles(board_state)
 	var owners_map: Dictionary = board_state.get("property_owners", {})
+	var teams_map: Dictionary = board_state.get("player_teams", {})
 
 	var group_total: int = 0
 	var owned_by_self: int = 0
@@ -173,7 +174,7 @@ func should_buy_property(player: Dictionary, tile: Dictionary, tile_index: int, 
 				continue
 			if owners_map.has(i):
 				var owner_id: int = int(owners_map[i])
-				if owner_id == player_id:
+				if _is_same_side(owner_id, player_id, teams_map):
 					owned_by_self += 1
 				else:
 					owned_by_opponents += 1
@@ -425,6 +426,7 @@ func choose_bot_trade_proposal(
 	var owners_map: Dictionary = board_state.get("property_owners", {})
 	var buildings_map: Dictionary = board_state.get("property_buildings", {})
 	var mortgaged_map: Dictionary = board_state.get("mortgaged_tiles", {})
+	var teams_map: Dictionary = board_state.get("player_teams", {})
 
 	var proposer_id: int = int(proposer.get("id", -1))
 	var profile: String = str(proposer.get("bot_profile", PROFILE_CONSERVADOR))
@@ -440,7 +442,7 @@ func choose_bot_trade_proposal(
 			continue
 		if _group_has_any_building(tid, tiles_arr, buildings_map):
 			continue
-		if _is_in_complete_monopoly_dict(proposer_id, tid, tiles_arr, owners_map):
+		if _is_in_complete_monopoly_dict(proposer_id, tid, tiles_arr, owners_map, teams_map):
 			continue
 		offerable.append(tid)
 
@@ -457,6 +459,8 @@ func choose_bot_trade_proposal(
 		var target: Dictionary = target_var
 		var target_id: int = int(target.get("id", -1))
 		if target_id == proposer_id or bool(target.get("bankrupt", false)):
+			continue
+		if _is_same_side(proposer_id, target_id, teams_map):
 			continue
 		# Negociação automática ocorre apenas entre bots (nunca força troca em jogador humano)
 		if not bool(target.get("is_bot", false)):
@@ -475,11 +479,11 @@ func choose_bot_trade_proposal(
 				continue
 			if _group_has_any_building(req_tile, tiles_arr, buildings_map):
 				continue
-			if _is_in_complete_monopoly_dict(target_id, req_tile, tiles_arr, owners_map):
+			if _is_in_complete_monopoly_dict(target_id, req_tile, tiles_arr, owners_map, teams_map):
 				continue
 
 			var req_group: String = str(req_data.get("group", ""))
-			var g_stats: Dictionary = _get_group_ownership_stats(proposer_id, req_group, tiles_arr, owners_map)
+			var g_stats: Dictionary = _get_group_ownership_stats(proposer_id, req_group, tiles_arr, owners_map, teams_map)
 			var g_total: int = int(g_stats["total"])
 			var g_self: int = int(g_stats["self"])
 			if g_total <= 0 or g_self <= 0:
@@ -491,7 +495,7 @@ func choose_bot_trade_proposal(
 				continue
 
 			var req_val_for_proposer: float = _estimate_tile_strategic_value(
-				req_tile, proposer_id, tiles_arr, owners_map, mortgaged_map, true
+				req_tile, proposer_id, tiles_arr, owners_map, mortgaged_map, true, teams_map
 			)
 
 			# Candidato A: Troca cruzada (escritura + ajuste justo em dinheiro)
@@ -504,13 +508,13 @@ func choose_bot_trade_proposal(
 					continue
 
 				var off_val_for_proposer: float = _estimate_tile_strategic_value(
-					off_tile, proposer_id, tiles_arr, owners_map, mortgaged_map, false
+					off_tile, proposer_id, tiles_arr, owners_map, mortgaged_map, false, teams_map
 				)
 				var off_val_for_target: float = _estimate_tile_strategic_value(
-					off_tile, target_id, tiles_arr, owners_map, mortgaged_map, true
+					off_tile, target_id, tiles_arr, owners_map, mortgaged_map, true, teams_map
 				)
 				var req_val_for_target: float = _estimate_tile_strategic_value(
-					req_tile, target_id, tiles_arr, owners_map, mortgaged_map, false
+					req_tile, target_id, tiles_arr, owners_map, mortgaged_map, false, teams_map
 				)
 
 				# Complemento justo em dinheiro (múltiplo de R$ 10, com margem amigável para aceitação mútua)
@@ -552,7 +556,7 @@ func choose_bot_trade_proposal(
 			# Candidato B: Compra direta em dinheiro com ágio justo (quando fecha monopólio e há folga de caixa)
 			if completes_proposer and (market_push or round_number >= 2):
 				var req_val_target: float = _estimate_tile_strategic_value(
-					req_tile, target_id, tiles_arr, owners_map, mortgaged_map, false
+					req_tile, target_id, tiles_arr, owners_map, mortgaged_map, false, teams_map
 				)
 				var premium_mult: float = 1.32 if market_push else 1.44
 				var offer_cash: int = roundi((req_val_target * premium_mult) / 10.0) * 10
@@ -595,6 +599,9 @@ func evaluate_bot_trade_offer(
 	var owners_map: Dictionary = board_state.get("property_owners", {})
 	var buildings_map: Dictionary = board_state.get("property_buildings", {})
 	var mortgaged_map: Dictionary = board_state.get("mortgaged_tiles", {})
+	var teams_map: Dictionary = board_state.get("player_teams", {})
+	if _is_same_side(receiver_id, proposer_id, teams_map):
+		return false
 
 	# Exigir contrapartida mínima real e impedir venda/troca se algum grupo envolvido tiver construções
 	if offer_tile < 0 and request_tile < 0:
@@ -605,16 +612,16 @@ func evaluate_bot_trade_offer(
 		return false
 
 	if request_tile >= 0:
-		if request_tile >= tiles_arr.size() or int(owners_map.get(request_tile, -1)) != receiver_id:
+		if request_tile >= tiles_arr.size() or not _is_same_side(int(owners_map.get(request_tile, -1)), receiver_id, teams_map):
 			return false
 		if _group_has_any_building(request_tile, tiles_arr, buildings_map):
 			return false
 		# Nunca entrega terreno de um monopólio que o destinatário já completou
-		if _is_in_complete_monopoly_dict(receiver_id, request_tile, tiles_arr, owners_map):
+		if _is_in_complete_monopoly_dict(receiver_id, request_tile, tiles_arr, owners_map, teams_map):
 			return false
 
 	if offer_tile >= 0:
-		if offer_tile >= tiles_arr.size() or int(owners_map.get(offer_tile, -1)) != proposer_id:
+		if offer_tile >= tiles_arr.size() or not _is_same_side(int(owners_map.get(offer_tile, -1)), proposer_id, teams_map):
 			return false
 		if _group_has_any_building(offer_tile, tiles_arr, buildings_map):
 			return false
@@ -634,16 +641,16 @@ func evaluate_bot_trade_offer(
 	var received_val: float = float(cash_delta)
 	var receiver_completes_monopoly: bool = false
 	if offer_tile >= 0:
-		received_val += _estimate_tile_strategic_value(offer_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, true)
+		received_val += _estimate_tile_strategic_value(offer_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, true, teams_map)
 		var off_data: Dictionary = tiles_arr[offer_tile]
 		if str(off_data.get("type", "")) == "PROPERTY":
-			var off_stats: Dictionary = _get_group_ownership_stats(receiver_id, str(off_data.get("group", "")), tiles_arr, owners_map)
+			var off_stats: Dictionary = _get_group_ownership_stats(receiver_id, str(off_data.get("group", "")), tiles_arr, owners_map, teams_map)
 			if int(off_stats["total"]) > 0 and int(off_stats["self"]) == int(off_stats["total"]) - 1:
 				receiver_completes_monopoly = true
 
 	var given_val: float = 0.0
 	if request_tile >= 0:
-		given_val = _estimate_tile_strategic_value(request_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, false)
+		given_val = _estimate_tile_strategic_value(request_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, false, teams_map)
 
 	# Caso especial: humano está vendendo um lote para o Bot por dinheiro (request_tile == -1, cash_delta < 0)
 	if request_tile < 0 and offer_tile >= 0 and cash_delta < 0:
@@ -651,7 +658,7 @@ func evaluate_bot_trade_offer(
 		if receiver_money_after < buy_reserve and not receiver_completes_monopoly:
 			return false
 		var purchase_cost: float = float(absi(cash_delta))
-		var offer_strategic: float = _estimate_tile_strategic_value(offer_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, true)
+		var offer_strategic: float = _estimate_tile_strategic_value(offer_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, true, teams_map)
 		var max_pay_ratio: float = 1.15 if receiver_completes_monopoly else 0.98
 		return offer_strategic * max_pay_ratio >= purchase_cost
 
@@ -659,7 +666,7 @@ func evaluate_bot_trade_offer(
 	var req_data: Dictionary = tiles_arr[request_tile]
 	var gives_proposer_monopoly: bool = false
 	if str(req_data.get("type", "")) == "PROPERTY":
-		var p_stats: Dictionary = _get_group_ownership_stats(proposer_id, str(req_data.get("group", "")), tiles_arr, owners_map)
+		var p_stats: Dictionary = _get_group_ownership_stats(proposer_id, str(req_data.get("group", "")), tiles_arr, owners_map, teams_map)
 		if int(p_stats["total"]) > 0 and int(p_stats["self"]) == int(p_stats["total"]) - 1:
 			gives_proposer_monopoly = true
 
@@ -699,13 +706,25 @@ func evaluate_bot_trade_offer(
 
 	return received_val >= given_val * required_margin
 
+func _is_same_side(pid_a: int, pid_b: int, teams_map: Dictionary) -> bool:
+	if pid_a < 0 or pid_b < 0:
+		return false
+	if pid_a == pid_b:
+		return true
+	if teams_map.is_empty():
+		return false
+	var ta: int = int(teams_map.get(pid_a, -1))
+	var tb: int = int(teams_map.get(pid_b, -1))
+	return ta >= 0 and ta == tb
+
 func _estimate_tile_strategic_value(
 	tile_idx: int,
 	viewer_id: int,
 	tiles: Array[Dictionary],
 	owners_map: Dictionary,
 	mortgaged_map: Dictionary,
-	is_acquiring: bool
+	is_acquiring: bool,
+	teams_map: Dictionary = {}
 ) -> float:
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return 0.0
@@ -719,7 +738,7 @@ func _estimate_tile_strategic_value(
 		return val * 0.95
 
 	var g_name: String = str(tile.get("group", ""))
-	var stats: Dictionary = _get_group_ownership_stats(viewer_id, g_name, tiles, owners_map)
+	var stats: Dictionary = _get_group_ownership_stats(viewer_id, g_name, tiles, owners_map, teams_map)
 	var total: int = int(stats["total"])
 	var owned_self: int = int(stats["self"])
 	if total <= 0:
@@ -746,7 +765,8 @@ func _get_group_ownership_stats(
 	player_id: int,
 	group_name: String,
 	tiles: Array[Dictionary],
-	owners_map: Dictionary
+	owners_map: Dictionary,
+	teams_map: Dictionary = {}
 ) -> Dictionary:
 	var total: int = 0
 	var self_count: int = 0
@@ -756,7 +776,7 @@ func _get_group_ownership_stats(
 		var t: Dictionary = tiles[i]
 		if str(t.get("type", "")) == "PROPERTY" and str(t.get("group", "")) == group_name:
 			total += 1
-			if owners_map.has(i) and int(owners_map[i]) == player_id:
+			if owners_map.has(i) and _is_same_side(int(owners_map[i]), player_id, teams_map):
 				self_count += 1
 	return { "total": total, "self": self_count }
 
@@ -783,7 +803,8 @@ func _is_in_complete_monopoly_dict(
 	player_id: int,
 	tile_idx: int,
 	tiles: Array[Dictionary],
-	owners_map: Dictionary
+	owners_map: Dictionary,
+	teams_map: Dictionary = {}
 ) -> bool:
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return false
@@ -791,7 +812,7 @@ func _is_in_complete_monopoly_dict(
 	if str(tile.get("type", "")) != "PROPERTY":
 		return false
 	var g_name: String = str(tile.get("group", ""))
-	var stats: Dictionary = _get_group_ownership_stats(player_id, g_name, tiles, owners_map)
+	var stats: Dictionary = _get_group_ownership_stats(player_id, g_name, tiles, owners_map, teams_map)
 	return int(stats["total"]) > 0 and int(stats["self"]) >= int(stats["total"])
 
 func _is_in_complete_monopoly(
@@ -836,10 +857,11 @@ func choose_auction_bid(
 	var tiles_arr: Array[Dictionary] = _extract_tiles(board_state)
 	var owners_map: Dictionary = board_state.get("property_owners", {})
 	var mortgaged_map: Dictionary = board_state.get("mortgaged_tiles", {})
+	var teams_map: Dictionary = board_state.get("player_teams", {})
 
 	var base_price: int = int(tile.get("price", 100))
 	var strategic_val: float = _estimate_tile_strategic_value(
-		tile_index, bot_id, tiles_arr, owners_map, mortgaged_map, true
+		tile_index, bot_id, tiles_arr, owners_map, mortgaged_map, true, teams_map
 	)
 	if strategic_val <= 0.0:
 		strategic_val = float(base_price)

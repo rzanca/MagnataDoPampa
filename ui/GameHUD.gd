@@ -2857,7 +2857,9 @@ func show_victory_modal(info: Dictionary) -> void:
 
 	var winner_name: String = str(info.get("name", "Campeão"))
 	var is_bot: bool = bool(info.get("is_bot", false))
-	var display_name: String = "%s [BOT]" % winner_name if is_bot else winner_name
+	var team_name: String = str(info.get("team_name", ""))
+	var team_members: String = str(info.get("team_members", ""))
+	var display_name: String = ("EQUIPE %s VENCEU!" % team_name.to_upper()) if team_name != "" else ("%s [BOT]" % winner_name if is_bot else winner_name)
 	var winner_color: Color = info.get("color", Color("#E9C46A"))
 	var pawn_id: String = str(info.get("pawn_id", "cuia"))
 	var pawn_name: String = str(info.get("pawn_name", "Cuia de Chimarrão"))
@@ -2902,6 +2904,8 @@ func show_victory_modal(info: Dictionary) -> void:
 	var rounds_played: int = int(info.get("rounds_played", 1))
 	_add_victory_stat_row("Rodadas Disputadas", "Rodada %d" % maxi(1, rounds_played), Color("#A7D7C5"), false)
 	_add_victory_stat_row("Estanceiros na Partida", "%d jogadores" % total_players, Color("#B7C9BE"), false)
+	if team_name != "" and team_members != "":
+		_add_victory_stat_row("Integrantes (%s)" % team_name, team_members, Color(str(info.get("team_color_hex", "#F8D568"))), false)
 
 	_victory_overlay.visible = true
 
@@ -4883,7 +4887,9 @@ func refresh_hud(
 			_hero_phase_label.add_theme_color_override("font_color", Color("#E8FFF2"))
 
 		var pawn_status_suffix: String = " • XADREZ" if active_in_jail else ""
-		_hero_pawn_name_label.text = "%s%s" % [active_pawn_name, pawn_status_suffix]
+		var active_team_name: String = str(active_p.get("team_name", ""))
+		var team_prefix: String = ("[%s] " % active_team_name.to_upper()) if active_team_name != "" else ""
+		_hero_pawn_name_label.text = "%s%s%s" % [team_prefix, active_pawn_name, pawn_status_suffix]
 		_hero_pawn_name_label.add_theme_color_override("font_color", Color("#F8D568") if active_in_jail else Color("#BDD3C6"))
 	else:
 		_hero_name_label.text = "-"
@@ -5030,9 +5036,17 @@ func _format_player_net_tag(p: Dictionary) -> String:
 		return " [ONLINE]"
 	return ""
 
-func _get_player_monopoly_groups(player: Dictionary, tiles: Array[Dictionary]) -> Array[String]:
+func _get_player_monopoly_groups(player: Dictionary, tiles: Array[Dictionary], all_players: Array[Dictionary] = []) -> Array[String]:
 	var result: Array[String] = []
-	var owned_props: Array = player.get("properties", [])
+	var owned_props: Array = []
+	var team_id: int = int(player.get("team_id", -1))
+	if team_id >= 0 and not all_players.is_empty():
+		for other: Dictionary in all_players:
+			if int(other.get("team_id", -1)) == team_id:
+				for p_idx: Variant in other.get("properties", []):
+					owned_props.append(p_idx)
+	else:
+		owned_props = player.get("properties", [])
 	if owned_props.is_empty() or tiles.is_empty():
 		return result
 	var group_totals: Dictionary[String, int] = {}
@@ -5072,7 +5086,7 @@ func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_
 		var p_money: int = int(p["money"])
 		var props: Array = p.get("properties", [])
 		var props_count: int = props.size()
-		var mono_groups: Array[String] = _get_player_monopoly_groups(p, _cached_tiles)
+		var mono_groups: Array[String] = _get_player_monopoly_groups(p, _cached_tiles, players)
 
 		var card: PanelContainer = PanelContainer.new()
 		var bg_hex: String = "#1B2E24" if is_active else "#111A15"
@@ -5147,6 +5161,9 @@ func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_
 		info_vb.add_child(name_lbl)
 
 		var tags: Array[String] = []
+		var p_team_name: String = str(p.get("team_name", ""))
+		if p_team_name != "":
+			tags.append(p_team_name.to_upper())
 		if is_bankrupt:
 			tags.append("FALIDO")
 		else:

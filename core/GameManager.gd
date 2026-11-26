@@ -69,6 +69,8 @@ var _seasons_enabled: bool = false
 var _current_season_index: int = 0
 var _round_limit: int = 0
 var _net_worth_goal: int = 0
+var _team_mode: String = "ffa" # "ffa" | "2v2" | "3v3"
+var _team_wallets: Dictionary[int, int] = {}
 
 var board_view: Board3DClass = null
 var hud: GameHUDClass = null
@@ -509,6 +511,8 @@ func _reset_match_state() -> void:
 	doubles_count = 0
 	current_round = 1
 	_acted_in_current_round.clear()
+	_team_mode = "ffa"
+	_team_wallets.clear()
 	_bot_traded_this_turn = false
 	_selected_property_tile = -1
 	_has_extra_roll = false
@@ -569,6 +573,85 @@ func get_current_season_id() -> String:
 	if not _seasons_enabled:
 		return ""
 	return SEASON_ORDER[clampi(_current_season_index, 0, SEASON_ORDER.size() - 1)]
+
+func is_team_mode() -> bool:
+	return _team_mode == "2v2" or _team_mode == "3v3"
+
+func get_team_mode() -> String:
+	return _team_mode
+
+func get_player_team_id(player_id: int) -> int:
+	if not is_team_mode() or player_id < 0:
+		return -1
+	var p: Dictionary = _get_player_by_id(player_id)
+	if p.is_empty():
+		return -1
+	return int(p.get("team_id", -1))
+
+func are_allied_players(pid_a: int, pid_b: int) -> bool:
+	if pid_a < 0 or pid_b < 0:
+		return false
+	if pid_a == pid_b:
+		return true
+	if not is_team_mode():
+		return false
+	var ta: int = get_player_team_id(pid_a)
+	var tb: int = get_player_team_id(pid_b)
+	return ta >= 0 and ta == tb
+
+func _is_owned_by_player_or_team(tile_idx: int, player_id: int) -> bool:
+	var owner_id: int = property_owners.get(tile_idx, -1)
+	if owner_id < 0 or player_id < 0:
+		return false
+	return are_allied_players(owner_id, player_id)
+
+func _get_actor_or_team_properties(player_id: int) -> Array[int]:
+	var result: Array[int] = []
+	if not is_team_mode():
+		var p: Dictionary = _get_player_by_id(player_id)
+		for tid_var: Variant in p.get("properties", []):
+			result.append(int(tid_var))
+		result.sort()
+		return result
+	for p: Dictionary in players:
+		if are_allied_players(int(p.get("id", -1)), player_id):
+			for tid_var: Variant in p.get("properties", []):
+				var tid: int = int(tid_var)
+				if not (tid in result):
+					result.append(tid)
+	result.sort()
+	return result
+
+func _adjust_player_money(player: Dictionary, delta: int) -> void:
+	if player.is_empty():
+		return
+	var pid: int = int(player.get("id", -1))
+	var tid: int = get_player_team_id(pid)
+	if is_team_mode() and tid >= 0:
+		var updated: int = int(_team_wallets.get(tid, int(player.get("money", 0)))) + delta
+		_team_wallets[tid] = updated
+		for member: Dictionary in players:
+			if int(member.get("team_id", -1)) == tid:
+				member["money"] = updated
+	else:
+		player["money"] = int(player.get("money", 0)) + delta
+
+func _build_player_teams_map() -> Dictionary[int, int]:
+	var out: Dictionary[int, int] = {}
+	if not is_team_mode():
+		return out
+	for p: Dictionary in players:
+		out[int(p.get("id", -1))] = int(p.get("team_id", -1))
+	return out
+
+func _count_active_teams() -> int:
+	if not is_team_mode():
+		return _count_active_players()
+	var seen: Dictionary[int, bool] = {}
+	for p: Dictionary in players:
+		if not bool(p.get("bankrupt", false)):
+			seen[int(p.get("team_id", -1))] = true
+	return seen.size()
 
 func get_current_season_info() -> Dictionary:
 	if not _seasons_enabled:
@@ -687,8 +770,33 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 			"pawn_id": str(cfg.get("pawn_id", "cuia")),
 			"pawn_name": str(cfg.get("pawn_name", "Cuia de Chimarrão")),
 			"pawn_code": str(cfg.get("pawn_code", "CU")),
-			"color_hex": str(cfg.get("color_hex", ""))
+			"color_hex": str(cfg.get("color_hex", "")),
+			"team_id": int(cfg.get("team_id", -1)),
+			"team_name": str(cfg.get("team_name", "")),
+			"team_color_hex": str(cfg.get("team_color_hex", ""))
 		})
+
+	_team_wallets.clear()
+	var team_counts: Dictionary[int, int] = {}
+	for pl: Dictionary in players:
+		var t_id: int = int(pl.get("team_id", -1))
+		if t_id >= 0:
+			team_counts[t_id] = team_counts.get(t_id, 0) + 1
+	if team_counts.size() >= 2:
+		var max_per_team: int = 0
+		for tc: int in team_counts.values():
+			max_per_team = maxi(max_per_team, tc)
+		_team_mode = "3v3" if max_per_team >= 3 else ("2v2" if max_per_team >= 2 else "ffa")
+	else:
+		_team_mode = "ffa"
+	if is_team_mode():
+		for t_k: int in team_counts.keys():
+			_team_wallets[t_k] = start_money
+	else:
+		for pl: Dictionary in players:
+			pl["team_id"] = -1
+			pl["team_name"] = ""
+			pl["team_color_hex"] = ""
 
 	property_owners.clear()
 	property_buildings.clear()
@@ -721,7 +829,8 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	if _game_rules_mode == "dynamic":
 		_apply_dynamic_initial_draft()
 	var mode_badge_txt: String = "Estância Dinâmica" if _game_rules_mode == "dynamic" else "Clássico"
-	_log_both("Partida (%s) iniciada com %d estanceiros! Saldo inicial: %d Pilas." % [mode_badge_txt, players.size(), start_money])
+	var team_badge_txt: String = " • Times %s" % _team_mode.replace("v", "x") if is_team_mode() else ""
+	_log_both("Partida (%s%s) iniciada com %d estanceiros! Saldo inicial: %d Pilas." % [mode_badge_txt, team_badge_txt, players.size(), start_money])
 	if _seasons_enabled:
 		var s_info: Dictionary = get_current_season_info()
 		_log_both("Estação inicial: %s — %s" % [str(s_info.get("label", "")), str(s_info.get("effect_desc", ""))])
@@ -739,7 +848,7 @@ func _would_complete_monopoly(player_id: int, tile_idx: int) -> bool:
 	if g_name == "":
 		return false
 	for g_tid: int in _get_group_tile_indices(g_name):
-		if g_tid != tile_idx and property_owners.get(g_tid, -1) != player_id:
+		if g_tid != tile_idx and not _is_owned_by_player_or_team(g_tid, player_id):
 			return false
 	return true
 
@@ -785,10 +894,10 @@ func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 
 	var active_pid: int = int(players[current_player_index].get("id", -1)) if (not players.is_empty() and current_player_index >= 0 and current_player_index < players.size()) else -1
 	var human_can_act: bool = (active_pid >= 0) and (not _is_human_input_blocked()) and (not _is_auction_active())
-	var is_owner_active: bool = is_owned and (owner_id == active_pid) and human_can_act
+	var is_owner_active: bool = is_owned and are_allied_players(owner_id, active_pid) and human_can_act
 	var can_trade_this_tile: bool = (
 		is_owned
-		and owner_id != active_pid
+		and not are_allied_players(owner_id, active_pid)
 		and human_can_act
 		and _can_open_trade()
 		and not _group_has_buildings(tile_idx)
@@ -888,12 +997,11 @@ func _build_portfolio_inspection_info(player_id: int) -> Dictionary:
 	var active_pid: int = int(players[current_player_index].get("id", -1)) if (not players.is_empty() and current_player_index >= 0 and current_player_index < players.size()) else -1
 	var can_manage_owner: bool = (
 		active_pid >= 0
-		and active_pid == player_id
+		and are_allied_players(active_pid, player_id)
 		and (not _is_human_input_blocked())
 		and (not _is_auction_active())
 	)
 
-	var owned_props: Array = target.get("properties", [])
 	var deeds_list: Array[Dictionary] = []
 	var mono_seen: Dictionary[String, bool] = {}
 	var monopolies: Array[Dictionary] = []
@@ -901,10 +1009,7 @@ func _build_portfolio_inspection_info(player_id: int) -> Dictionary:
 	var hotels_total: int = 0
 	var mortgaged_count: int = 0
 
-	var sorted_ids: Array[int] = []
-	for p_idx: Variant in owned_props:
-		sorted_ids.append(int(p_idx))
-	sorted_ids.sort()
+	var sorted_ids: Array[int] = _get_actor_or_team_properties(player_id)
 
 	for tid: int in sorted_ids:
 		if tid < 0 or tid >= tiles.size():
@@ -1389,6 +1494,7 @@ func _build_bot_board_state() -> Dictionary:
 		"property_owners": property_owners,
 		"property_buildings": property_buildings,
 		"mortgaged_tiles": mortgaged_tiles,
+		"player_teams": _build_player_teams_map(),
 		"bank_houses_left": bank_houses_left,
 		"bank_hotels_left": bank_hotels_left,
 		"unowned_buyables": _count_unowned_buyables()
@@ -1462,9 +1568,7 @@ func _has_liquidatable_assets(player_id: int) -> bool:
 	var player: Dictionary = _get_player_by_id(player_id)
 	if player.is_empty() or bool(player.get("bankrupt", false)):
 		return false
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tid: int = int(p_idx)
+	for tid: int in _get_actor_or_team_properties(player_id):
 		if property_buildings.get(tid, 0) > 0:
 			return true
 		if not mortgaged_tiles.get(tid, false):
@@ -1476,9 +1580,7 @@ func _get_max_liquidatable_cash(player_id: int) -> int:
 	if player.is_empty() or bool(player.get("bankrupt", false)):
 		return 0
 	var total: int = 0
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tid: int = int(p_idx)
+	for tid: int in _get_actor_or_team_properties(player_id):
 		if tid < 0 or tid >= tiles.size():
 			continue
 		var tile: Dictionary = tiles[tid]
@@ -1561,7 +1663,7 @@ func _has_monopoly(owner_id: int, group_name: String) -> bool:
 	if group_indices.is_empty():
 		return false
 	for idx: int in group_indices:
-		if property_owners.get(idx, -1) != owner_id:
+		if not are_allied_players(property_owners.get(idx, -1), owner_id):
 			return false
 	return true
 
@@ -1587,7 +1689,7 @@ func _can_build_on(player_id: int, tile_idx: int) -> bool:
 	var tile: Dictionary = tiles[tile_idx]
 	if str(tile.get("type", "")) != "PROPERTY":
 		return false
-	if property_owners.get(tile_idx, -1) != player_id:
+	if not _is_owned_by_player_or_team(tile_idx, player_id):
 		return false
 	if mortgaged_tiles.get(tile_idx, false):
 		return false
@@ -1630,7 +1732,7 @@ func _can_sell_building_on(player_id: int, tile_idx: int) -> bool:
 	var tile: Dictionary = tiles[tile_idx]
 	if str(tile.get("type", "")) != "PROPERTY":
 		return false
-	if property_owners.get(tile_idx, -1) != player_id:
+	if not _is_owned_by_player_or_team(tile_idx, player_id):
 		return false
 
 	var current_level: int = property_buildings.get(tile_idx, 0)
@@ -1654,7 +1756,7 @@ func _can_toggle_mortgage(player_id: int, tile_idx: int) -> bool:
 	var player: Dictionary = _get_player_by_id(player_id)
 	if player.is_empty() or bool(player.get("bankrupt", false)):
 		return false
-	if property_owners.get(tile_idx, -1) != player_id:
+	if property_owners.get(tile_idx, -1) < 0 or not _is_owned_by_player_or_team(tile_idx, player_id):
 		return false
 
 	var tile: Dictionary = tiles[tile_idx]
@@ -1668,49 +1770,36 @@ func _can_toggle_mortgage(player_id: int, tile_idx: int) -> bool:
 
 func _get_buildable_tiles_for(player_id: int) -> Array[int]:
 	var result: Array[int] = []
-	var player: Dictionary = _get_player_by_id(player_id)
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tid: int = int(p_idx)
+	for tid: int in _get_actor_or_team_properties(player_id):
 		if _can_build_on(player_id, tid):
 			result.append(tid)
 	return result
 
 func _get_sellable_tiles_for(player_id: int) -> Array[int]:
 	var result: Array[int] = []
-	var player: Dictionary = _get_player_by_id(player_id)
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tid: int = int(p_idx)
+	for tid: int in _get_actor_or_team_properties(player_id):
 		if _can_sell_building_on(player_id, tid):
 			result.append(tid)
 	return result
 
 func _get_mortgageable_tiles_for(player_id: int) -> Array[int]:
 	var result: Array[int] = []
-	var player: Dictionary = _get_player_by_id(player_id)
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tid: int = int(p_idx)
+	for tid: int in _get_actor_or_team_properties(player_id):
 		if not mortgaged_tiles.get(tid, false) and _can_toggle_mortgage(player_id, tid):
 			result.append(tid)
 	return result
 
 func _get_unmortgageable_tiles_for(player_id: int) -> Array[int]:
 	var result: Array[int] = []
-	var player: Dictionary = _get_player_by_id(player_id)
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tid: int = int(p_idx)
+	for tid: int in _get_actor_or_team_properties(player_id):
 		if mortgaged_tiles.get(tid, false) and _can_toggle_mortgage(player_id, tid):
 			result.append(tid)
 	return result
 
 func _build_owned_options(player: Dictionary) -> Array[Dictionary]:
 	var options: Array[Dictionary] = []
-	var owned_props: Array = player.get("properties", [])
-	for p_idx: Variant in owned_props:
-		var tile_idx: int = int(p_idx)
+	var pid: int = int(player.get("id", -1))
+	for tile_idx: int in _get_actor_or_team_properties(pid):
 		if tile_idx < 0 or tile_idx >= tiles.size():
 			continue
 		var t: Dictionary = tiles[tile_idx]
@@ -1840,8 +1929,8 @@ func _sync_hud() -> void:
 	var jail_card_label: String = "Carta Livre (%d)" % jail_cards_count if jail_cards_count > 0 else "Carta Livre"
 
 	var owned_opts: Array[Dictionary] = _build_owned_options(player)
-	var owned_props: Array = player.get("properties", [])
-	if not (_selected_property_tile in owned_props):
+	var actor_props: Array[int] = _get_actor_or_team_properties(pid)
+	if not (_selected_property_tile in actor_props):
 		_selected_property_tile = int(owned_opts[0]["tile_index"]) if owned_opts.size() > 0 else -1
 
 	var can_build: bool = (_selected_property_tile >= 0) and _can_build_on(pid, _selected_property_tile)
@@ -2154,7 +2243,7 @@ func build_on_property(tile_idx: int) -> void:
 	var cost: int = _get_effective_house_cost(tile)
 	var current_lvl: int = property_buildings.get(tile_idx, 0)
 
-	player["money"] = int(player["money"]) - cost
+	_adjust_player_money(player, -cost)
 	if current_lvl == 4:
 		bank_houses_left += 4
 		bank_hotels_left -= 1
@@ -2192,7 +2281,7 @@ func sell_building_on_property(tile_idx: int) -> void:
 		bank_hotels_left += 1
 		bank_houses_left -= houses_to_place
 		property_buildings[tile_idx] = houses_to_place
-		player["money"] = int(player["money"]) + refund
+		_adjust_player_money(player, refund)
 		if houses_to_place == 4:
 			_log_both("%s vendeu o HOTEL de %s por %d Pilas (voltou para 4 casas)." % [str(player["name"]), str(tile["name"]), refund])
 		else:
@@ -2201,7 +2290,7 @@ func sell_building_on_property(tile_idx: int) -> void:
 		var next_lvl: int = current_lvl - 1
 		bank_houses_left += 1
 		property_buildings[tile_idx] = next_lvl
-		player["money"] = int(player["money"]) + half_cost
+		_adjust_player_money(player, half_cost)
 		_log_both("%s vendeu 1 casa em %s por %d Pilas (%d/4 restante)." % [str(player["name"]), str(tile["name"]), half_cost, next_lvl])
 
 	if int(player["money"]) >= 0:
@@ -2242,7 +2331,7 @@ func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
 		var tile: Dictionary = tiles[tid]
 		if str(tile.get("type", "")) != "PROPERTY":
 			return false
-		if property_owners.get(tid, -1) != pid:
+		if not _is_owned_by_player_or_team(tid, pid):
 			return false
 		var g_name: String = str(tile.get("group", ""))
 		if not _has_monopoly(pid, g_name):
@@ -2305,7 +2394,7 @@ func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
 	# Aplicar todas as alterações em lote de forma atômica
 	bank_houses_left -= houses_delta
 	bank_hotels_left -= hotels_delta
-	player["money"] = int(player["money"]) - net_cost
+	_adjust_player_money(player, -net_cost)
 	if int(player["money"]) >= 0:
 		_last_creditor_id = -1
 
@@ -2343,12 +2432,12 @@ func toggle_mortgage(tile_idx: int) -> void:
 	var was_mortgaged: bool = mortgaged_tiles.get(tile_idx, false)
 	if was_mortgaged:
 		var redeem_cost: int = _get_redeem_cost(tile)
-		player["money"] = int(player["money"]) - redeem_cost
+		_adjust_player_money(player, -redeem_cost)
 		mortgaged_tiles[tile_idx] = false
 		_last_tile_summary = "%s desipotecou %s por %d Pilas." % [str(player["name"]), str(tile["name"]), redeem_cost]
 		_log_both(_last_tile_summary)
 	else:
-		player["money"] = int(player["money"]) + m_val
+		_adjust_player_money(player, m_val)
 		mortgaged_tiles[tile_idx] = true
 		_last_tile_summary = "%s hipotecou %s e levantou %d Pilas." % [str(player["name"]), str(tile["name"]), m_val]
 		_log_both(_last_tile_summary)
@@ -2382,7 +2471,7 @@ func pay_bail() -> void:
 		return
 	var player: Dictionary = players[current_player_index]
 	var bail: int = int(board_config.get("bail_cost", 50))
-	player["money"] = int(player["money"]) - bail
+	_adjust_player_money(player, -bail)
 	player["in_jail"] = false
 	player["jail_turns"] = 0
 	var rolled_this_turn: bool = (current_state == TurnState.MANAGEMENT)
@@ -2456,7 +2545,7 @@ func roll_dice() -> void:
 			player["jail_turns"] = int(player.get("jail_turns", 0)) + 1
 			if int(player["jail_turns"]) >= 3:
 				var bail: int = int(board_config.get("bail_cost", 50))
-				player["money"] = int(player["money"]) - bail
+				_adjust_player_money(player, -bail)
 				player["in_jail"] = false
 				player["jail_turns"] = 0
 				_last_creditor_id = -1
@@ -2537,7 +2626,7 @@ func move_player(player: Dictionary, steps: int, allow_pass_go: bool = true, dic
 
 	if allow_pass_go and steps > 0 and (old_pos + steps) >= size:
 		var bonus: int = _get_effective_pass_go_bonus()
-		player["money"] = int(player["money"]) + bonus
+		_adjust_player_money(player, bonus)
 		if int(player["money"]) >= 0:
 			_last_creditor_id = -1
 		_log_both("Cruzou o Galpão Central! Ganhou %d Pilas." % bonus)
@@ -2597,8 +2686,15 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 				current_state = TurnState.EVALUATING
 			else:
 				var owner_id: int = property_owners[pos]
-				if owner_id == int(player["id"]):
+				var landing_pid: int = int(player["id"])
+				if owner_id == landing_pid:
 					_last_tile_summary = "Sua propriedade: %s" % str(tile["name"])
+					current_state = TurnState.MANAGEMENT
+				elif are_allied_players(owner_id, landing_pid):
+					var ally_name: String = str(_get_player_by_id(owner_id).get("name", "Aliado"))
+					var ally_team: String = str(player.get("team_name", "Equipe"))
+					_last_tile_summary = "Estadia aliada (%s • %s): %s sem aluguel!" % [ally_team, ally_name, str(tile["name"])]
+					_log_both(_last_tile_summary)
 					current_state = TurnState.MANAGEMENT
 				else:
 					var owner: Dictionary = _get_player_by_id(owner_id)
@@ -2607,9 +2703,9 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 						_last_tile_summary = "%s está hipotecada! Nenhum aluguel cobrado." % str(tile["name"])
 						_log_both(_last_tile_summary)
 					else:
-						player["money"] = int(player["money"]) - rent_amount
+						_adjust_player_money(player, -rent_amount)
 						if not owner.is_empty():
-							owner["money"] = int(owner["money"]) + rent_amount
+							_adjust_player_money(owner, rent_amount)
 						if int(player["money"]) < 0:
 							_last_creditor_id = owner_id
 						var owner_name: String = str(owner.get("name", "Banco"))
@@ -2625,7 +2721,7 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 						current_state = TurnState.MANAGEMENT
 		"TAX":
 			var tax: int = _get_effective_tax_amount(tile)
-			player["money"] = int(player["money"]) - tax
+			_adjust_player_money(player, -tax)
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
 			_last_tile_summary = "%s: pagou %d Pilas." % [str(tile["name"]), tax]
@@ -2672,11 +2768,12 @@ func _trigger_20_setembro_event(player: Dictionary, pos: int) -> void:
 	var collected_total: int = 0
 	var contributors_count: int = 0
 	for other: Dictionary in players:
-		if int(other.get("id", -1)) == active_pid or bool(other.get("bankrupt", false)):
+		var other_id: int = int(other.get("id", -1))
+		if are_allied_players(other_id, active_pid) or bool(other.get("bankrupt", false)):
 			continue
 		if int(other.get("money", 0)) >= payer_contrib:
-			other["money"] = int(other["money"]) - payer_contrib
-			player["money"] = int(player["money"]) + payer_contrib
+			_adjust_player_money(other, -payer_contrib)
+			_adjust_player_money(player, payer_contrib)
 			collected_total += payer_contrib
 			contributors_count += 1
 
@@ -2688,7 +2785,7 @@ func _trigger_20_setembro_event(player: Dictionary, pos: int) -> void:
 		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Rateio de Chimarrão no Galpão: %s recebeu +%d Pilas!" % [p_name, collected_total], "chance")
 	else:
 		var bank_gift: int = 50
-		player["money"] = int(player["money"]) + bank_gift
+		_adjust_player_money(player, bank_gift)
 		if int(player.get("money", 0)) >= 0:
 			_last_creditor_id = -1
 		_last_tile_summary = "20 de Setembro! %s recebeu pró-labore farroupilha de +%d Pilas!" % [p_name, bank_gift]
@@ -2797,14 +2894,14 @@ func _draw_chance_card(player: Dictionary) -> void:
 	match card_type:
 		"GAIN_MONEY":
 			var amt: int = int(card.get("amount", 0))
-			player["money"] = int(player["money"]) + amt
+			_adjust_player_money(player, amt)
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
 			current_state = TurnState.MANAGEMENT
 		"SEASONAL_GAIN":
 			var sg_info: Dictionary = _resolve_seasonal_card_amount(card)
 			var sg_amt: int = int(sg_info.get("amount", 0))
-			player["money"] = int(player["money"]) + sg_amt
+			_adjust_player_money(player, sg_amt)
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
 			if bool(sg_info.get("matched", false)):
@@ -2812,7 +2909,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 			current_state = TurnState.MANAGEMENT
 		"PAY_MONEY":
 			var amt: int = int(card.get("amount", 0))
-			player["money"] = int(player["money"]) - amt
+			_adjust_player_money(player, -amt)
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
 			_check_bankruptcy(player, false)
@@ -2821,7 +2918,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 		"SEASONAL_PAY":
 			var sp_info: Dictionary = _resolve_seasonal_card_amount(card)
 			var sp_amt: int = int(sp_info.get("amount", 0))
-			player["money"] = int(player["money"]) - sp_amt
+			_adjust_player_money(player, -sp_amt)
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
 			if bool(sp_info.get("matched", false)):
@@ -2832,7 +2929,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 		"MOVE_TO_START":
 			var bonus: int = _get_effective_pass_go_bonus()
 			player["position"] = 0
-			player["money"] = int(player["money"]) + bonus
+			_adjust_player_money(player, bonus)
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
 			if board_view != null:
@@ -2867,7 +2964,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 					houses_count += lvl
 			var repair_total: int = houses_count * per_house + hotels_count * per_hotel
 			if repair_total > 0:
-				player["money"] = int(player["money"]) - repair_total
+				_adjust_player_money(player, -repair_total)
 				if int(player["money"]) < 0:
 					_last_creditor_id = -1
 				_log_both("Manutenção: %s pagou %d Pilas (%d casa(s), %d hotel(is))." % [str(player["name"]), repair_total, houses_count, hotels_count])
@@ -2881,10 +2978,11 @@ func _draw_chance_card(player: Dictionary) -> void:
 			var collector_id: int = int(player["id"])
 			var collected_total: int = 0
 			for other: Dictionary in players:
-				if int(other["id"]) == collector_id or bool(other.get("bankrupt", false)):
+				var other_id: int = int(other.get("id", -1))
+				if are_allied_players(other_id, collector_id) or bool(other.get("bankrupt", false)):
 					continue
-				other["money"] = int(other["money"]) - per_player
-				player["money"] = int(player["money"]) + per_player
+				_adjust_player_money(other, -per_player)
+				_adjust_player_money(player, per_player)
 				collected_total += per_player
 				if int(other["money"]) < 0:
 					_check_bankruptcy(other, false, collector_id)
@@ -2900,11 +2998,12 @@ func _draw_chance_card(player: Dictionary) -> void:
 			var payer_id: int = int(player["id"])
 			var paid_total: int = 0
 			for other: Dictionary in players:
-				if int(other["id"]) == payer_id or bool(other.get("bankrupt", false)):
+				var other_id: int = int(other.get("id", -1))
+				if are_allied_players(other_id, payer_id) or bool(other.get("bankrupt", false)):
 					continue
-				other["money"] = int(other["money"]) + per_player
+				_adjust_player_money(other, per_player)
 				paid_total += per_player
-			player["money"] = int(player["money"]) - paid_total
+			_adjust_player_money(player, -paid_total)
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
 			_log_both("%s pagou %d Pilas no total (%d Pilas para cada estanceiro ativo)." % [str(player["name"]), paid_total, per_player])
@@ -2951,10 +3050,18 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 		if not candidate.is_empty() and not bool(candidate.get("bankrupt", false)):
 			creditor = candidate
 
-	var props_to_process: Array = player.get("properties", [])
+	var props_to_process: Array[int] = _get_actor_or_team_properties(target_pid) if is_team_mode() else []
+	if not is_team_mode():
+		for p_v: Variant in player.get("properties", []):
+			props_to_process.append(int(p_v))
+	if is_team_mode():
+		var loser_tid: int = get_player_team_id(target_pid)
+		for member: Dictionary in players:
+			if int(member.get("team_id", -1)) == loser_tid:
+				member["bankrupt"] = true
+				(member["properties"] as Array).clear()
 	var transferred_count: int = 0
-	for p_idx: Variant in props_to_process:
-		var tid: int = int(p_idx)
+	for tid: int in props_to_process:
 		var lvl: int = property_buildings.get(tid, 0)
 		if lvl >= 5:
 			bank_hotels_left += 1
@@ -2972,7 +3079,8 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 			property_owners.erase(tid)
 			mortgaged_tiles.erase(tid)
 
-	props_to_process.clear()
+	if not is_team_mode():
+		(player["properties"] as Array).clear()
 
 	var held_cards: int = int(player.get("jail_free_cards", 0))
 	if held_cards > 0:
@@ -3003,9 +3111,10 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 			active_count += 1
 			winner_player = p
 
-	if active_count > 1:
+	var sides_left: int = _count_active_teams() if is_team_mode() else active_count
+	if sides_left > 1:
 		_play_sfx("bankrupt")
-	if active_count <= 1:
+	if sides_left <= 1:
 		_trigger_victory(winner_player)
 
 func _trigger_victory(winner_player: Dictionary, custom_summary: String = "", victory_reason: String = "") -> void:
@@ -3017,7 +3126,10 @@ func _trigger_victory(winner_player: Dictionary, custom_summary: String = "", vi
 	_is_animating = false
 	if board_view != null:
 		board_view.cancel_animations()
-	var last_winner: String = str(winner_player.get("name", "Campeão")) if not winner_player.is_empty() else "-"
+	var w_id: int = int(winner_player.get("id", 0)) if not winner_player.is_empty() else 0
+	var w_team_name: String = str(winner_player.get("team_name", "")) if (not winner_player.is_empty() and is_team_mode()) else ""
+	var w_team_hex: String = str(winner_player.get("team_color_hex", "")) if (not winner_player.is_empty() and is_team_mode()) else ""
+	var last_winner: String = ("Equipe %s" % w_team_name) if w_team_name != "" else (str(winner_player.get("name", "Campeão")) if not winner_player.is_empty() else "-")
 	if custom_summary != "":
 		_last_tile_summary = custom_summary
 	else:
@@ -3026,31 +3138,39 @@ func _trigger_victory(winner_player: Dictionary, custom_summary: String = "", vi
 	_sync_active_player_highlight()
 	_sync_hud()
 	if not winner_player.is_empty():
-		var w_id: int = int(winner_player.get("id", 0))
-		var w_props: Array = winner_player.get("properties", [])
+		var w_prop_ids: Array[int] = _get_actor_or_team_properties(w_id)
 		var w_houses: int = 0
 		var w_hotels: int = 0
-		for tid_var: Variant in w_props:
-			var tid_int: int = int(tid_var)
+		for tid_int: int in w_prop_ids:
 			var b_lvl: int = property_buildings.get(tid_int, 0)
 			if b_lvl >= 5:
 				w_hotels += 1
 			elif b_lvl > 0:
 				w_houses += b_lvl
-		var w_color: Color = board_view.get_player_color(w_id) if board_view != null else Color("#E9C46A")
+		var team_member_names: Array[String] = []
+		if w_team_name != "":
+			for tm: Dictionary in players:
+				if are_allied_players(int(tm.get("id", -1)), w_id):
+					var m_lbl: String = "%s [BOT]" % str(tm.get("name", "")) if bool(tm.get("is_bot", false)) else str(tm.get("name", ""))
+					team_member_names.append(m_lbl)
+		var w_color: Color = Color(w_team_hex) if w_team_hex != "" else (board_view.get_player_color(w_id) if board_view != null else Color("#E9C46A"))
 		var victory_info: Dictionary = {
 			"name": str(winner_player.get("name", "Campeão")),
 			"is_bot": bool(winner_player.get("is_bot", false)),
 			"pawn_id": str(winner_player.get("pawn_id", "cuia")),
 			"pawn_name": str(winner_player.get("pawn_name", "Cuia de Chimarrão")),
 			"pawn_code": str(winner_player.get("pawn_code", "")),
+			"team_id": get_player_team_id(w_id),
+			"team_name": w_team_name,
+			"team_color_hex": w_team_hex,
+			"team_members": ", ".join(team_member_names),
 			"color": w_color,
 			"color_hex": "#" + w_color.to_html(false),
 			"money": int(winner_player.get("money", 0)),
 			"net_worth": _compute_player_net_worth(winner_player),
 			"monopolies_count": _count_player_monopolies(w_id),
 			"victory_reason": victory_reason,
-			"properties_count": w_props.size(),
+			"properties_count": w_prop_ids.size(),
 			"houses_count": w_houses,
 			"hotels_count": w_hotels,
 			"rounds_played": current_round,
@@ -3078,9 +3198,8 @@ func _count_player_monopolies(player_id: int) -> int:
 
 func _compute_player_net_worth(player: Dictionary) -> int:
 	var worth: int = int(player.get("money", 0))
-	var props: Array = player.get("properties", [])
-	for tid_var: Variant in props:
-		var tid: int = int(tid_var)
+	var pid: int = int(player.get("id", -1))
+	for tid: int in _get_actor_or_team_properties(pid):
 		if tid < 0 or tid >= tiles.size():
 			continue
 		var tile: Dictionary = tiles[tid]
@@ -3099,14 +3218,15 @@ func _check_dynamic_victory_conditions() -> bool:
 		if bool(p.get("bankrupt", false)):
 			continue
 		var pid: int = int(p.get("id", -1))
+		var actor_label: String = ("Equipe %s" % str(p.get("team_name", ""))) if is_team_mode() else str(p.get("name", "Campeão"))
 		var mono_count: int = _count_player_monopolies(pid)
 		if mono_count >= DYNAMIC_MONOPOLY_GOAL:
-			var m_summary: String = "%s atingiu %d monopólios e venceu na Estância Dinâmica!" % [str(p.get("name", "Campeão")), mono_count]
+			var m_summary: String = "%s atingiu %d monopólios e venceu na Estância Dinâmica!" % [actor_label, mono_count]
 			_trigger_victory(p, m_summary, "3 Monopólios")
 			return true
 		var net_worth: int = _compute_player_net_worth(p)
 		if _net_worth_goal > 0 and net_worth >= _net_worth_goal:
-			var n_summary: String = "%s alcançou %d Pilas de patrimônio e dominou a Estância Dinâmica!" % [str(p.get("name", "Campeão")), net_worth]
+			var n_summary: String = "%s alcançou %d Pilas de patrimônio e dominou a Estância Dinâmica!" % [actor_label, net_worth]
 			_trigger_victory(p, n_summary, "Meta de Patrimônio")
 			return true
 
@@ -3124,7 +3244,8 @@ func _check_dynamic_victory_conditions() -> bool:
 				best_worth = w
 				best_cash = c
 		if not best_p.is_empty():
-			var r_summary: String = "Fim das %d rodadas! %s venceu por patrimônio (%d Pilas)!" % [_round_limit, str(best_p.get("name", "Campeão")), best_worth]
+			var b_label: String = ("Equipe %s" % str(best_p.get("team_name", ""))) if is_team_mode() else str(best_p.get("name", "Campeão"))
+			var r_summary: String = "Fim das %d rodadas! %s venceu por patrimônio (%d Pilas)!" % [_round_limit, b_label, best_worth]
 			_trigger_victory(best_p, r_summary, "Maior Patrimônio (30 Rodadas)")
 			return true
 
@@ -3138,7 +3259,7 @@ func buy_current_property() -> void:
 	var tile: Dictionary = tiles[pos]
 	var price: int = int(tile.get("price", 0))
 
-	player["money"] = int(player["money"]) - price
+	_adjust_player_money(player, -price)
 	property_owners[pos] = int(player["id"])
 	var owned_props: Array = player["properties"]
 	owned_props.append(pos)
@@ -3272,17 +3393,19 @@ func _validate_trade_proposal(
 	var target: Dictionary = _get_player_by_id(target_id)
 	if sender.is_empty() or target.is_empty() or sender_id == target_id:
 		return { "ok": false, "reason": "Troca negada: participante inválido." }
+	if are_allied_players(sender_id, target_id):
+		return { "ok": false, "reason": "Troca negada: aliados de equipe já compartilham caixa e escrituras." }
 	if bool(sender.get("bankrupt", false)) or bool(target.get("bankrupt", false)):
 		return { "ok": false, "reason": "Troca negada: participante falido." }
 
 	if offer_tile >= 0:
-		if offer_tile >= tiles.size() or property_owners.get(offer_tile, -1) != sender_id:
+		if offer_tile >= tiles.size() or not _is_owned_by_player_or_team(offer_tile, sender_id):
 			return { "ok": false, "reason": "Troca negada: você não é dono dessa escritura." }
 		if _group_has_buildings(offer_tile):
 			return { "ok": false, "reason": "Troca negada: remova as construções do grupo antes de trocar." }
 
 	if request_tile >= 0:
-		if request_tile >= tiles.size() or property_owners.get(request_tile, -1) != target_id:
+		if request_tile >= tiles.size() or not _is_owned_by_player_or_team(request_tile, target_id):
 			return { "ok": false, "reason": "Troca negada: o outro jogador não possui essa escritura." }
 		if _group_has_buildings(request_tile):
 			return { "ok": false, "reason": "Troca negada: propriedade em grupo com construção não pode ser trocada." }
@@ -3416,11 +3539,11 @@ func _commit_trade_agreement(
 
 	var abs_cash: int = absi(cash_delta)
 	if cash_delta > 0:
-		sender["money"] = int(sender["money"]) - cash_delta
-		target["money"] = int(target["money"]) + cash_delta
+		_adjust_player_money(sender, -cash_delta)
+		_adjust_player_money(target, cash_delta)
 	elif cash_delta < 0:
-		target["money"] = int(target["money"]) - abs_cash
-		sender["money"] = int(sender["money"]) + abs_cash
+		_adjust_player_money(target, -abs_cash)
+		_adjust_player_money(sender, abs_cash)
 
 	if int(sender["money"]) >= 0 and not players.is_empty() and int(players[current_player_index]["id"]) == sender_id:
 		_last_creditor_id = -1
@@ -3428,11 +3551,17 @@ func _commit_trade_agreement(
 	var sender_props: Array = sender["properties"]
 	var target_props: Array = target["properties"]
 	if offer_tile >= 0:
+		var old_off_owner: Dictionary = _get_player_by_id(property_owners.get(offer_tile, sender_id))
+		if not old_off_owner.is_empty():
+			(old_off_owner["properties"] as Array).erase(offer_tile)
 		sender_props.erase(offer_tile)
 		target_props.append(offer_tile)
 		property_owners[offer_tile] = target_id
 
 	if request_tile >= 0:
+		var old_req_owner: Dictionary = _get_player_by_id(property_owners.get(request_tile, target_id))
+		if not old_req_owner.is_empty():
+			(old_req_owner["properties"] as Array).erase(request_tile)
 		target_props.erase(request_tile)
 		sender_props.append(request_tile)
 		property_owners[request_tile] = sender_id
@@ -3497,7 +3626,7 @@ func _can_auction_owned_tile(player_id: int, tile_idx: int) -> bool:
 		return false
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return false
-	if property_owners.get(tile_idx, -1) != player_id:
+	if not _is_owned_by_player_or_team(tile_idx, player_id):
 		return false
 	var t_type: String = str(tiles[tile_idx].get("type", ""))
 	if t_type != "PROPERTY" and t_type != "COMPANY":
@@ -3523,7 +3652,7 @@ func start_owned_property_auction(tile_idx: int) -> bool:
 	var eligible: Array[int] = []
 	for p: Dictionary in players:
 		var pid: int = int(p.get("id", -1))
-		if pid != seller_id and not bool(p.get("bankrupt", false)) and int(p.get("money", 0)) >= min_bid:
+		if not are_allied_players(pid, seller_id) and not bool(p.get("bankrupt", false)) and int(p.get("money", 0)) >= min_bid:
 			eligible.append(pid)
 	if eligible.is_empty():
 		_log_both("Nenhum adversário possui saldo mínimo (%d Pilas) para abrir leilão de %s." % [min_bid, str(tile.get("name", "Lote"))])
@@ -3718,15 +3847,15 @@ func _finalize_auction() -> void:
 	if winner_id >= 0 and winning_bid > 0 and tile_idx >= 0 and tile_idx < tiles.size():
 		var winner: Dictionary = _get_player_by_id(winner_id)
 		var is_valid_bank_sale: bool = (seller_id < 0 and not property_owners.has(tile_idx))
-		var is_valid_player_sale: bool = (seller_id >= 0 and property_owners.get(tile_idx, -1) == seller_id and winner_id != seller_id)
+		var is_valid_player_sale: bool = (seller_id >= 0 and _is_owned_by_player_or_team(tile_idx, seller_id) and not are_allied_players(winner_id, seller_id))
 		if (is_valid_bank_sale or is_valid_player_sale) and not winner.is_empty() and int(winner.get("money", 0)) >= winning_bid:
-			winner["money"] = int(winner["money"]) - winning_bid
+			_adjust_player_money(winner, -winning_bid)
 			if seller_id >= 0:
-				var seller: Dictionary = _get_player_by_id(seller_id)
+				var seller: Dictionary = _get_player_by_id(property_owners.get(tile_idx, seller_id))
 				if not seller.is_empty():
-					seller["money"] = int(seller["money"]) + winning_bid
+					_adjust_player_money(seller, winning_bid)
 					(seller["properties"] as Array).erase(tile_idx)
-					if int(seller["money"]) >= 0 and not players.is_empty() and int(players[current_player_index].get("id", -1)) == seller_id:
+					if int(seller["money"]) >= 0 and not players.is_empty() and are_allied_players(int(players[current_player_index].get("id", -1)), seller_id):
 						_last_creditor_id = -1
 			property_owners[tile_idx] = winner_id
 			var w_props: Array = winner["properties"]
@@ -3778,6 +3907,10 @@ func _run_auction_bot_step(expected_token: int, bidder_id: int) -> void:
 	var bidder: Dictionary = _get_player_by_id(bidder_id)
 	var tile_idx: int = int(_auction_state.get("tile_index", -1))
 	if bidder.is_empty() or tile_idx < 0 or tile_idx >= tiles.size():
+		pass_auction_turn(bidder_id)
+		return
+	var high_id: int = int(_auction_state.get("highest_bidder_id", -1))
+	if high_id >= 0 and are_allied_players(bidder_id, high_id):
 		pass_auction_turn(bidder_id)
 		return
 	var bid_val: int = bot_ai.choose_auction_bid(
@@ -3949,7 +4082,10 @@ func _build_network_snapshot() -> Dictionary:
 			"pawn_id": str(p.get("pawn_id", "cuia")),
 			"pawn_name": str(p.get("pawn_name", "Cuia de Chimarrão")),
 			"pawn_code": str(p.get("pawn_code", "CU")),
-			"color_hex": str(p.get("color_hex", ""))
+			"color_hex": str(p.get("color_hex", "")),
+			"team_id": int(p.get("team_id", -1)),
+			"team_name": str(p.get("team_name", "")),
+			"team_color_hex": str(p.get("team_color_hex", ""))
 		})
 
 	var owners_out: Dictionary = {}
@@ -3967,8 +4103,14 @@ func _build_network_snapshot() -> Dictionary:
 		victory_out = _last_victory_info.duplicate(true)
 		victory_out.erase("color")
 
+	var team_wallets_out: Dictionary = {}
+	for tk: int in _team_wallets.keys():
+		team_wallets_out[tk] = _team_wallets[tk]
+
 	return {
 		"session_id": _active_net_session_id,
+		"team_mode": _team_mode,
+		"team_wallets": team_wallets_out,
 		"players": clean_players,
 		"property_owners": owners_out,
 		"property_buildings": buildings_out,
@@ -4036,6 +4178,12 @@ func _apply_network_snapshot(snapshot: Dictionary, is_initial_start: bool) -> vo
 	_current_season_index = posmod(int(snapshot.get("current_season_index", 0)), SEASON_ORDER.size())
 	_round_limit = int(snapshot.get("round_limit", 0))
 	_net_worth_goal = int(snapshot.get("net_worth_goal", 0))
+	_team_mode = str(snapshot.get("team_mode", "ffa"))
+	_team_wallets.clear()
+	var raw_tw: Variant = snapshot.get("team_wallets", {})
+	if raw_tw is Dictionary:
+		for tk: Variant in (raw_tw as Dictionary).keys():
+			_team_wallets[int(tk)] = int((raw_tw as Dictionary)[tk])
 	_has_extra_roll = bool(snapshot.get("has_extra_roll", false))
 	_last_dice_sum = int(snapshot.get("last_dice_sum", 0))
 	_last_tile_summary = str(snapshot.get("last_tile_summary", ""))

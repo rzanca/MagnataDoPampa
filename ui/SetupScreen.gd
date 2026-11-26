@@ -49,6 +49,29 @@ const COLOR_OPTIONS: Array[Dictionary] = [
 	{ "name": "Roxo Vinhedo", "hex": "#A45CFF" },
 	{ "name": "Terracota", "hex": "#FF7A38" }
 ]
+const TEAM_PRESETS: Array[Dictionary] = [
+	{
+		"label": "Maragatos vs Chimangos",
+		"teams": [
+			{ "id": 0, "name": "Maragatos", "hex": "#C82838", "code": "MAR" },
+			{ "id": 1, "name": "Chimangos", "hex": "#2EA8E0", "code": "CHI" }
+		]
+	},
+	{
+		"label": "Fronteira vs Serra",
+		"teams": [
+			{ "id": 0, "name": "Fronteira", "hex": "#22C55E", "code": "FRN" },
+			{ "id": 1, "name": "Serra", "hex": "#F5CA5C", "code": "SER" }
+		]
+	},
+	{
+		"label": "Verde vs Ouro Campeiro",
+		"teams": [
+			{ "id": 0, "name": "Pampa Verde", "hex": "#16A34A", "code": "VER" },
+			{ "id": 1, "name": "Ouro Campeiro", "hex": "#E5A93C", "code": "OUR" }
+		]
+	}
+]
 
 var _profile_adapter: RefCounted = null
 var _is_touch_mode: bool = false
@@ -74,6 +97,13 @@ var _slot_pawn_indices: Array[int] = []
 var _slot_color_indices: Array[int] = []
 var _slot_peer_ids: Array[int] = []
 var _slot_peer_statuses: Array[String] = []
+var _slot_team_badges: Array[Label] = []
+var _team_mode: String = "ffa" # "ffa" | "2v2" | "3v3"
+var _team_preset_idx: int = 0
+var _btn_team_ffa: Button
+var _btn_team_2v2: Button
+var _btn_team_3v3: Button
+var _btn_team_theme: Button
 var _updating_slots: bool = false
 
 # Controles de Modo Local vs P2P LAN (ENet) vs Multiplayer Web (WebRTC)
@@ -689,6 +719,37 @@ func _build_ui() -> void:
 	spacer_tb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	toolbar.add_child(spacer_tb)
 
+	var team_lbl: Label = Label.new()
+	team_lbl.text = "Formato:"
+	team_lbl.add_theme_font_size_override("font_size", roundi(12.5 * f_scale))
+	team_lbl.add_theme_color_override("font_color", Color("#9EB7A8"))
+	toolbar.add_child(team_lbl)
+
+	_btn_team_ffa = Button.new()
+	_btn_team_ffa.text = "Livre"
+	_btn_team_ffa.tooltip_text = "Todos contra Todos (individual)"
+	_btn_team_ffa.pressed.connect(func() -> void: set_team_mode("ffa"))
+	toolbar.add_child(_btn_team_ffa)
+
+	_btn_team_2v2 = Button.new()
+	_btn_team_2v2.text = "2x2"
+	_btn_team_2v2.tooltip_text = "Equipes 2 contra 2 (caixa e escrituras compartilhadas)"
+	_btn_team_2v2.pressed.connect(func() -> void: set_team_mode("2v2"))
+	toolbar.add_child(_btn_team_2v2)
+
+	_btn_team_3v3 = Button.new()
+	_btn_team_3v3.text = "3x3"
+	_btn_team_3v3.tooltip_text = "Equipes 3 contra 3 (caixa e escrituras compartilhadas)"
+	_btn_team_3v3.pressed.connect(func() -> void: set_team_mode("3v3"))
+	toolbar.add_child(_btn_team_3v3)
+
+	_btn_team_theme = Button.new()
+	_btn_team_theme.text = "Maragatos x Chimangos"
+	_btn_team_theme.tooltip_text = "Clique para alternar os nomes e cores das equipes"
+	_btn_team_theme.pressed.connect(_cycle_team_preset)
+	toolbar.add_child(_btn_team_theme)
+	_refresh_team_controls()
+
 	var quick_lbl: Label = Label.new()
 	quick_lbl.text = "Início rápido:"
 	quick_lbl.add_theme_font_size_override("font_size", roundi(13.0 * f_scale))
@@ -859,6 +920,14 @@ func _build_slot_card(slot_idx: int, f_scale: float, ctrl_h: float) -> PanelCont
 	idx_lbl.add_theme_color_override("font_color", Color("#F3C969"))
 	row_a.add_child(idx_lbl)
 
+	var team_badge: Label = Label.new()
+	team_badge.visible = false
+	if _bold_font != null:
+		team_badge.add_theme_font_override("font", _bold_font)
+	team_badge.add_theme_font_size_override("font_size", roundi(10.5 * f_scale))
+	row_a.add_child(team_badge)
+	_slot_team_badges.append(team_badge)
+
 	var name_edit: LineEdit = LineEdit.new()
 	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_edit.custom_minimum_size = Vector2(140.0, ctrl_h)
@@ -946,14 +1015,98 @@ func _on_viewport_size_changed() -> void:
 func _set_player_count(new_count: int) -> void:
 	if _net_mode == 2:
 		return
+	if _team_mode == "2v2" and new_count != 4:
+		_team_mode = "ffa"
+	elif _team_mode == "3v3" and new_count != 6:
+		_team_mode = "ffa"
 	var min_allowed: int = maxi(MIN_PLAYERS, _connected_peers.size() if _net_mode == 1 else MIN_PLAYERS)
 	_player_count = clampi(new_count, min_allowed, MAX_PLAYERS)
+	_refresh_team_controls()
 	_refresh_count_buttons()
 	_refresh_visible_slots()
 	_deduplicate_active_slot_choices()
 	_refresh_exclusive_choices()
 	if _net_mode == 1:
 		lobby_config_changed.emit()
+
+func get_team_mode() -> String:
+	return _team_mode
+
+func get_team_preset_index() -> int:
+	return _team_preset_idx
+
+func set_team_mode(mode_id: String, preset_idx: int = -1) -> void:
+	if _net_mode == 2:
+		return
+	_team_mode = mode_id if (mode_id == "2v2" or mode_id == "3v3") else "ffa"
+	if preset_idx >= 0:
+		_team_preset_idx = posmod(preset_idx, TEAM_PRESETS.size())
+	if _team_mode == "2v2":
+		_player_count = 4
+	elif _team_mode == "3v3":
+		_player_count = 6
+	_refresh_team_controls()
+	_refresh_count_buttons()
+	_refresh_visible_slots()
+	_deduplicate_active_slot_choices()
+	_refresh_exclusive_choices()
+	if _net_mode == 1:
+		lobby_config_changed.emit()
+
+func _cycle_team_preset() -> void:
+	if _net_mode == 2:
+		return
+	_team_preset_idx = (_team_preset_idx + 1) % TEAM_PRESETS.size()
+	_refresh_team_controls()
+	_refresh_table_summary()
+	if _net_mode == 1:
+		lobby_config_changed.emit()
+
+func _get_slot_team_info(slot_idx: int) -> Dictionary:
+	if _team_mode == "ffa":
+		return {}
+	var preset: Dictionary = TEAM_PRESETS[clampi(_team_preset_idx, 0, TEAM_PRESETS.size() - 1)]
+	var teams: Array = preset.get("teams", [])
+	if teams.size() < 2:
+		return {}
+	var team_slot: int = slot_idx % 2
+	return (teams[team_slot] as Dictionary).duplicate()
+
+func _refresh_team_controls() -> void:
+	var f_scale: float = 1.18 if _is_touch_mode else 1.0
+	var b_h: float = 40.0 if _is_touch_mode else 34.0
+	var b_fs: int = roundi(12.0 * f_scale)
+	if _btn_team_ffa != null:
+		if _team_mode == "ffa":
+			_style_button(_btn_team_ffa, "#24543B", "#2F6E4D", "#1A3D2B", "#F5D06F", Color("#FFF8D6"), b_fs, Vector2(62.0, b_h), 8, 2)
+		else:
+			_style_button(_btn_team_ffa, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#9FB8AA"), b_fs, Vector2(62.0, b_h), 8, 1)
+	if _btn_team_2v2 != null:
+		if _team_mode == "2v2":
+			_style_button(_btn_team_2v2, "#24543B", "#2F6E4D", "#1A3D2B", "#F5D06F", Color("#FFF8D6"), b_fs, Vector2(54.0, b_h), 8, 2)
+		else:
+			_style_button(_btn_team_2v2, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#9FB8AA"), b_fs, Vector2(54.0, b_h), 8, 1)
+	if _btn_team_3v3 != null:
+		if _team_mode == "3v3":
+			_style_button(_btn_team_3v3, "#24543B", "#2F6E4D", "#1A3D2B", "#F5D06F", Color("#FFF8D6"), b_fs, Vector2(54.0, b_h), 8, 2)
+		else:
+			_style_button(_btn_team_3v3, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#9FB8AA"), b_fs, Vector2(54.0, b_h), 8, 1)
+	if _btn_team_theme != null:
+		_btn_team_theme.visible = (_team_mode != "ffa")
+		var preset_lbl: String = str(TEAM_PRESETS[clampi(_team_preset_idx, 0, TEAM_PRESETS.size() - 1)].get("label", "Equipes"))
+		_btn_team_theme.text = preset_lbl
+		_style_button(_btn_team_theme, "#1B2E3B", "#254052", "#13212B", "#4EA8DE", Color("#DDF4FF"), roundi(11.5 * f_scale), Vector2(168.0, b_h), 8, 1)
+	for i: int in range(_slot_team_badges.size()):
+		var lbl: Label = _slot_team_badges[i]
+		if lbl == null:
+			continue
+		var t_info: Dictionary = _get_slot_team_info(i)
+		if t_info.is_empty():
+			lbl.visible = false
+		else:
+			lbl.visible = true
+			lbl.text = "[%s]" % str(t_info.get("name", "Equipe")).to_upper()
+			lbl.add_theme_color_override("font_color", Color(str(t_info.get("hex", "#F5D06F"))))
 
 func _apply_quick_solo_preset(target_count: int) -> void:
 	if _net_mode != 0:
@@ -1001,8 +1154,13 @@ func _refresh_table_summary() -> void:
 	if _net_mode != 0:
 		mode_txt = "Web (WebRTC)" if _net_transport == 2 else "P2P LAN (ENet)"
 	var rules_txt: String = "Estância Dinâmica (Estações)" if _rules_mode == "dynamic" else "Clássico Tradicional"
-	_summary_pill_label.text = "%s  •  Mesa %s  •  %d Estanceiros (%d Humano%s, %d [BOT]%s)" % [
+	var team_txt: String = ""
+	if _team_mode != "ffa":
+		var preset_lbl: String = str(TEAM_PRESETS[clampi(_team_preset_idx, 0, TEAM_PRESETS.size() - 1)].get("label", "Equipes"))
+		team_txt = "  •  Times %s (%s)" % [_team_mode.replace("v", "x"), preset_lbl]
+	_summary_pill_label.text = "%s%s  •  Mesa %s  •  %d Estanceiros (%d Humano%s, %d [BOT]%s)" % [
 		rules_txt,
+		team_txt,
 		mode_txt,
 		_player_count,
 		humans,
@@ -1387,6 +1545,10 @@ func _on_start_pressed() -> void:
 
 		var color_idx: int = clampi(_slot_color_indices[i], 0, COLOR_OPTIONS.size() - 1)
 		var color_hex: String = str(COLOR_OPTIONS[color_idx]["hex"])
+		var t_info: Dictionary = _get_slot_team_info(i)
+		var team_id_val: int = int(t_info.get("id", -1))
+		var team_name_val: String = str(t_info.get("name", ""))
+		var team_hex_val: String = str(t_info.get("hex", ""))
 
 		configs.append({
 			"name": player_name,
@@ -1395,7 +1557,10 @@ func _on_start_pressed() -> void:
 			"pawn_id": pawn_id,
 			"pawn_name": str(pawn_data["name"]),
 			"pawn_code": str(pawn_data["code"]),
-			"color_hex": color_hex
+			"color_hex": color_hex,
+			"team_id": team_id_val,
+			"team_name": team_name_val,
+			"team_color_hex": team_hex_val
 		})
 
 	if _net_mode == 1:
@@ -1702,6 +1867,8 @@ func get_lobby_snapshot_for_network() -> Dictionary:
 		})
 	return {
 		"player_count": _player_count,
+		"team_mode": _team_mode,
+		"team_preset_idx": _team_preset_idx,
 		"room_code": _web_room_code,
 		"slots": slots
 	}
@@ -1712,7 +1879,10 @@ func apply_remote_lobby_snapshot(lobby_data: Dictionary, local_peer_id: int) -> 
 	var synced_code: String = str(lobby_data.get("room_code", "")).strip_edges().to_upper()
 	if synced_code != "":
 		set_web_room_code(synced_code)
+	_team_mode = str(lobby_data.get("team_mode", "ffa"))
+	_team_preset_idx = posmod(int(lobby_data.get("team_preset_idx", 0)), TEAM_PRESETS.size())
 	_player_count = clampi(int(lobby_data.get("player_count", 2)), MIN_PLAYERS, MAX_PLAYERS)
+	_refresh_team_controls()
 	_refresh_count_buttons()
 	_refresh_visible_slots()
 	for cb: Button in _count_buttons:

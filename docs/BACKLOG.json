@@ -160,14 +160,14 @@
       "id": "LOTE-19",
       "title": "Modo de Times (FFA, 2x2 e 3x3) com caixa e escrituras compartilhadas (Maragatos vs Chimangos)",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Suporte completo a equipes 2x2 e 3x3 no SetupScreen, GameManager, BotAI, GameHUD e multiplayer snapshot com movimentos individuais e economia compartilhada."
     },
     {
       "id": "LOTE-20",
       "title": "Contratos de Parceria / Arrendamento Temporário (isenção de aluguel por 3 rodadas em trocas)",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Adicionar pacto opcional de isenção mútua de aluguel por 3 rodadas nas trocas de GameManager, BotAI e GameHUD."
     },
     {
