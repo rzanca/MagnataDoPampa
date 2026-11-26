@@ -967,12 +967,25 @@ func _can_roll_dice() -> bool:
 	if not _match_active or _is_animating or players.is_empty() or tiles.is_empty():
 		return false
 	var player: Dictionary = players[current_player_index]
-	if bool(player.get("bankrupt", false)):
+	if bool(player.get("bankrupt", false)) or int(player.get("money", 0)) < 0:
 		return false
 	if current_state == TurnState.WAITING_ROLL:
 		return true
 	if current_state == TurnState.MANAGEMENT and _has_extra_roll:
-		return not bool(player.get("in_jail", false)) and int(player["money"]) >= 0
+		return not bool(player.get("in_jail", false))
+	return false
+
+func _has_liquidatable_assets(player_id: int) -> bool:
+	var player: Dictionary = _get_player_by_id(player_id)
+	if player.is_empty() or bool(player.get("bankrupt", false)):
+		return false
+	var owned_props: Array = player.get("properties", [])
+	for p_idx: Variant in owned_props:
+		var tid: int = int(p_idx)
+		if property_buildings.get(tid, 0) > 0:
+			return true
+		if not mortgaged_tiles.get(tid, false):
+			return true
 	return false
 
 func _can_end_turn() -> bool:
@@ -982,6 +995,10 @@ func _can_end_turn() -> bool:
 		return false
 	if _is_current_player_bankrupt():
 		return true
+	var player: Dictionary = players[current_player_index]
+	if int(player.get("money", 0)) < 0:
+		# Não permite encerrar/declarar falência enquanto houver construções ou escrituras desipotecadas para liquidar
+		return not _has_liquidatable_assets(int(player.get("id", -1)))
 	if current_state == TurnState.MANAGEMENT:
 		return true
 	if current_state == TurnState.EVALUATING and not _has_extra_roll:
@@ -1006,13 +1023,19 @@ func _can_buy_current_tile() -> bool:
 	return int(player["money"]) >= int(tile.get("price", 0))
 
 func _can_pay_bail() -> bool:
-	if not _match_active or _is_animating or players.is_empty() or current_state != TurnState.WAITING_ROLL:
+	if not _match_active or _is_animating or players.is_empty():
+		return false
+	if current_state != TurnState.WAITING_ROLL and current_state != TurnState.MANAGEMENT:
 		return false
 	var player: Dictionary = players[current_player_index]
-	if bool(player.get("bankrupt", false)):
+	if bool(player.get("bankrupt", false)) or not bool(player.get("in_jail", false)):
+		return false
+	# Regra clássica do Xadrez: bloqueia fiança antes da 1ª tentativa nos dados (jail_turns == 0);
+	# libera pagamento opcional após tentativa (jail_turns >= 1) e torna obrigatório após 3ª falha.
+	if int(player.get("jail_turns", 0)) < 1:
 		return false
 	var bail: int = int(board_config.get("bail_cost", 50))
-	return bool(player.get("in_jail", false)) and int(player["money"]) >= bail
+	return int(player["money"]) >= bail
 
 func _can_use_jail_free_card() -> bool:
 	if not _match_active or _is_animating or players.is_empty() or current_state != TurnState.WAITING_ROLL:
@@ -1240,6 +1263,11 @@ func _sync_hud() -> void:
 	var transport_lbl: String = network.get_transport_label() if (online_now and network != null) else "LOCAL"
 	var room_code_str: String = network.get_room_code() if (online_now and network != null) else ""
 	hud.set_network_identity(online_now, _is_network_host(), local_peer, local_pid, wait_text, transport_lbl, room_code_str)
+	var tradable_map: Dictionary[int, bool] = {}
+	for owner_tid: int in property_owners.keys():
+		tradable_map[owner_tid] = not _group_has_buildings(owner_tid)
+	hud.set_board_snapshot_meta(property_owners, property_buildings, mortgaged_tiles, tradable_map)
+
 	var default_bail_label: String = "Fiança R$%d" % int(board_config.get("bail_cost", 50))
 	if players.is_empty() or not _match_active:
 		hud.refresh_hud(
@@ -1487,7 +1515,7 @@ func _run_bot_turn(expected_token: int) -> void:
 
 			if _can_roll_dice():
 				await roll_dice()
-				if _is_current_player_bankrupt():
+				if expected_token != _bot_turn_token or _is_current_player_bankrupt():
 					break
 				continue
 
@@ -1560,17 +1588,14 @@ func _run_bot_turn(expected_token: int) -> void:
 func _finish_post_move_step(player: Dictionary) -> void:
 	if current_state == TurnState.GAME_OVER:
 		return
-	if bool(player.get("bankrupt", false)):
+	if bool(player.get("bankrupt", false)) or int(player.get("money", 0)) < 0:
 		_has_extra_roll = false
 		doubles_count = 0
 		current_state = TurnState.MANAGEMENT
 		return
 	if _has_extra_roll and not bool(player.get("in_jail", false)):
-		if int(player["money"]) >= 0:
-			_log_both("Tirou dupla! Pode rolar os dados de novo.")
-			current_state = TurnState.WAITING_ROLL
-		else:
-			current_state = TurnState.MANAGEMENT
+		_log_both("Tirou dupla! Pode rolar os dados de novo.")
+		current_state = TurnState.WAITING_ROLL
 	else:
 		current_state = TurnState.MANAGEMENT
 
@@ -1653,7 +1678,9 @@ func sell_building_on_property(tile_idx: int) -> void:
 
 	if board_view != null:
 		board_view.update_buildings(property_buildings)
-	_sync_hud()
+	_check_post_liquidation_bankruptcy(player)
+	if current_state != TurnState.GAME_OVER:
+		_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("warning")
 
@@ -1684,9 +1711,23 @@ func toggle_mortgage(tile_idx: int) -> void:
 
 	if board_view != null:
 		board_view.update_ownership(property_owners, mortgaged_tiles)
-	_sync_hud()
+	_check_post_liquidation_bankruptcy(player)
+	if current_state != TurnState.GAME_OVER:
+		_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("positive" if was_mortgaged else "warning")
+
+func _check_post_liquidation_bankruptcy(player: Dictionary) -> void:
+	if int(player.get("money", 0)) >= 0 or bool(player.get("bankrupt", false)):
+		return
+	var pid: int = int(player.get("id", -1))
+	if _has_liquidatable_assets(pid):
+		return
+	_check_bankruptcy(player, false)
+	if bool(player.get("bankrupt", false)) and current_state != TurnState.GAME_OVER:
+		if not players.is_empty() and current_player_index >= 0 and current_player_index < players.size():
+			if int(players[current_player_index].get("id", -1)) == pid:
+				_advance_turn_after_bankruptcy(pid)
 
 func pay_bail() -> void:
 	if not _can_pay_bail():
@@ -1696,7 +1737,10 @@ func pay_bail() -> void:
 	player["money"] = int(player["money"]) - bail
 	player["in_jail"] = false
 	player["jail_turns"] = 0
+	var rolled_this_turn: bool = (current_state == TurnState.MANAGEMENT)
 	_last_tile_summary = "%s pagou R$ %d de fiança e saiu do Xadrez!" % [str(player["name"]), bail]
+	if rolled_this_turn:
+		_last_tile_summary = "%s pagou R$ %d de fiança e estará livre na próxima rodada." % [str(player["name"]), bail]
 	_log_both(_last_tile_summary)
 	_sync_hud()
 	if hud != null:
@@ -1769,14 +1813,22 @@ func roll_dice() -> void:
 				_last_creditor_id = -1
 				_log_both("3ª tentativa sem dupla! %s pagou R$ %d de fiança e andou %d casas." % [str(player["name"]), bail, total])
 				_check_bankruptcy(player, false)
-				if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
+				if current_state == TurnState.GAME_OVER:
+					_is_animating = false
+					return
+				if bool(player.get("bankrupt", false)):
+					_advance_turn_after_bankruptcy(int(player["id"]))
+					return
+				if not bool(player.get("bankrupt", false)):
 					await move_player(player, total, true, total)
 					if session_token != _match_session_token or not _match_active:
 						return
+					if bool(player.get("bankrupt", false)):
+						if current_state != TurnState.GAME_OVER:
+							_advance_turn_after_bankruptcy(int(player["id"]))
+						return
 					if current_state != TurnState.EVALUATING and current_state != TurnState.GAME_OVER:
 						current_state = TurnState.MANAGEMENT
-				elif current_state != TurnState.GAME_OVER:
-					current_state = TurnState.MANAGEMENT
 			else:
 				_log_both("Nada de dupla (%d/3 no Xadrez). Continua preso." % int(player["jail_turns"]))
 				_last_tile_summary = "%s continua no Xadrez (%d/3 tentativas)." % [str(player["name"]), int(player["jail_turns"])]
@@ -1802,7 +1854,12 @@ func roll_dice() -> void:
 		return
 
 	_is_animating = false
-	if current_state != TurnState.EVALUATING and current_state != TurnState.GAME_OVER:
+	if current_state == TurnState.GAME_OVER:
+		return
+	if bool(player.get("bankrupt", false)):
+		_advance_turn_after_bankruptcy(int(player["id"]))
+		return
+	if current_state != TurnState.EVALUATING:
 		_finish_post_move_step(player)
 
 	_sync_hud()
@@ -2012,7 +2069,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
 			_check_bankruptcy(player, false)
-			if current_state != TurnState.GAME_OVER:
+			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
 		"MOVE_TO_START":
 			var bonus: int = int(board_config.get("pass_go_bonus", 200))
@@ -2059,7 +2116,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 				_check_bankruptcy(player, false)
 			else:
 				_log_both("%s não possui construções e escapou do custo de manutenção!" % str(player["name"]))
-			if current_state != TurnState.GAME_OVER:
+			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
 		"COLLECT_FROM_ALL":
 			var per_player: int = int(card.get("amount", 50))
@@ -2078,7 +2135,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
 			_log_both("%s arrecadou R$ %d no total dos demais estanceiros!" % [str(player["name"]), collected_total])
-			if current_state != TurnState.GAME_OVER:
+			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
 		"PAY_ALL":
 			var per_player: int = int(card.get("amount", 50))
@@ -2094,12 +2151,12 @@ func _draw_chance_card(player: Dictionary) -> void:
 				_last_creditor_id = -1
 			_log_both("%s pagou R$ %d no total (R$ %d para cada estanceiro ativo)." % [str(player["name"]), paid_total, per_player])
 			_check_bankruptcy(player, false)
-			if current_state != TurnState.GAME_OVER:
+			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
 		_:
 			current_state = TurnState.MANAGEMENT
 
-func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, creditor_override: int = -2) -> void:
+func _check_bankruptcy(player: Dictionary, _force_bankrupt: bool = false, creditor_override: int = -2) -> void:
 	var target_pid: int = int(player["id"])
 	var is_active_turn_player: bool = (not players.is_empty() and int(players[current_player_index]["id"]) == target_pid)
 
@@ -2108,15 +2165,14 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 			_last_creditor_id = -1
 		return
 
-	if not force_bankrupt:
-		var owned_props: Array = player.get("properties", [])
-		for p_idx: Variant in owned_props:
-			var tid: int = int(p_idx)
-			var can_sell: bool = _can_sell_building_on(target_pid, tid)
-			var can_mortgage: bool = not mortgaged_tiles.get(tid, false) and _can_toggle_mortgage(target_pid, tid)
-			if can_sell or can_mortgage:
-				_log_both("Atenção! %s está no vermelho (R$ %d): venda construções, hipoteque escrituras ou encerre o turno." % [str(player["name"]), int(player["money"])])
-				return
+	# Regra Clássica: nunca decreta falência enquanto o jogador possuir construções para vender (50%)
+	# ou escrituras desipotecadas para hipotecar/negociar.
+	if _has_liquidatable_assets(target_pid):
+		if is_active_turn_player:
+			_has_extra_roll = false
+			doubles_count = 0
+		_log_both("Atenção! %s está no vermelho (R$ %d): venda construções ou hipoteque escrituras antes de falir." % [str(player["name"]), int(player["money"])])
+		return
 
 	player["bankrupt"] = true
 	if is_active_turn_player:
@@ -2269,8 +2325,54 @@ func send_to_jail(player: Dictionary) -> void:
 	_broadcast_toast_event("Pro Xadrez!", "%s foi direto para o Xadrez." % str(player["name"]), "negative")
 	current_state = TurnState.MANAGEMENT
 
+func _advance_turn_after_bankruptcy(finished_player_id: int) -> void:
+	if not _match_active or current_state == TurnState.GAME_OVER or players.is_empty():
+		return
+	doubles_count = 0
+	_has_extra_roll = false
+	_last_creditor_id = -1
+	_selected_property_tile = -1
+	_bot_turn_token += 1
+	_is_bot_thinking = false
+	_is_animating = false
+	_bot_traded_this_turn = false
+
+	_advance_round_if_complete(finished_player_id)
+
+	var total_p: int = players.size()
+	for _step: int in range(total_p):
+		current_player_index = (current_player_index + 1) % total_p
+		var candidate: Dictionary = players[current_player_index]
+		if not bool(candidate.get("bankrupt", false)):
+			break
+
+	var next_p: Dictionary = players[current_player_index]
+	if int(next_p.get("money", 0)) < 0 and not bool(next_p.get("bankrupt", false)):
+		if not _has_liquidatable_assets(int(next_p["id"])):
+			_check_bankruptcy(next_p, true)
+			if current_state == TurnState.GAME_OVER:
+				return
+			_advance_turn_after_bankruptcy(int(next_p["id"]))
+			return
+		current_state = TurnState.MANAGEMENT
+		_last_tile_summary = "%s precisa quitar dívida antes de prosseguir!" % str(next_p["name"])
+	else:
+		current_state = TurnState.WAITING_ROLL
+		_last_tile_summary = "Aguardando %s rolar os dados..." % str(next_p["name"])
+
+	_log_both("Vez de %s, tchê!" % str(next_p["name"]))
+	_sync_active_player_highlight()
+	_sync_hud()
+	if hud != null:
+		hud.flash_action_feedback("turn")
+	call_deferred("_maybe_start_bot_turn")
+
 func end_turn() -> void:
 	if not _can_end_turn():
+		var blocked_p: Dictionary = players[current_player_index] if not players.is_empty() else {}
+		if not blocked_p.is_empty() and int(blocked_p.get("money", 0)) < 0 and _has_liquidatable_assets(int(blocked_p["id"])):
+			_log_both("Liquide seus bens! Venda construções ou hipoteque escrituras antes de encerrar o turno.")
+			_sync_hud()
 		return
 
 	var current_player: Dictionary = players[current_player_index]
@@ -2280,6 +2382,10 @@ func end_turn() -> void:
 			_log_both("%s passou sem comprar %s." % [str(current_player["name"]), str(tiles[pos]["name"])])
 
 	if int(current_player["money"]) < 0 and not bool(current_player.get("bankrupt", false)):
+		if _has_liquidatable_assets(int(current_player["id"])):
+			_log_both("Liquide seus bens antes de declarar falência!")
+			_sync_hud()
+			return
 		_check_bankruptcy(current_player, true)
 		if current_state == TurnState.GAME_OVER:
 			_bot_turn_token += 1
@@ -2287,31 +2393,7 @@ func end_turn() -> void:
 			_sync_hud()
 			return
 
-	var finished_player_id: int = int(current_player["id"])
-	doubles_count = 0
-	_has_extra_roll = false
-	_last_creditor_id = -1
-	_selected_property_tile = -1
-	_bot_turn_token += 1
-	_is_bot_thinking = false
-	_bot_traded_this_turn = false
-
-	_advance_round_if_complete(finished_player_id)
-
-	var total_p: int = players.size()
-	for _step: int in range(total_p):
-		current_player_index = (current_player_index + 1) % total_p
-		if not bool(players[current_player_index].get("bankrupt", false)):
-			break
-
-	current_state = TurnState.WAITING_ROLL
-	_last_tile_summary = "Aguardando %s rolar os dados..." % str(players[current_player_index]["name"])
-	_log_both("Vez de %s, tchê!" % str(players[current_player_index]["name"]))
-	_sync_active_player_highlight()
-	_sync_hud()
-	if hud != null:
-		hud.flash_action_feedback("turn")
-	call_deferred("_maybe_start_bot_turn")
+	_advance_turn_after_bankruptcy(int(current_player["id"]))
 
 func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
 	if not _match_active or _is_animating or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:

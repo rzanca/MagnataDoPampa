@@ -29,6 +29,34 @@
       "owner_agent": "04_qa_devops.md",
       "status": "done",
       "notes": "Executar apenas uma instância do Godot por vez no Ryzen 7 5700G com 16GB de RAM."
+    },
+    {
+      "id": "LOTE-01",
+      "title": "Regras Críticas do Modo Clássico: liquidação/falência, fiança no Xadrez e filtro de trocas",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "done",
+      "notes": "Impedir falência enquanto houver patrimônio liquidável, avançar turno após falência real, restringir fiança antes da rolagem inicial e filtrar imóveis com construções no grupo."
+    },
+    {
+      "id": "LOTE-02",
+      "title": "Sistema de Negociação Seguro (confirmação obrigatória) e Leilões Periódicos",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "in_progress",
+      "notes": "Exigir aceite explícito do alvo (Local, BotAI, Rede P2P), permitir iniciar troca clicando no lote e implementar Leilão periódico a cada 3 ou 4 rodadas."
+    },
+    {
+      "id": "LOTE-03",
+      "title": "Construção estilo Carrinho de Compras, rótulo dinâmico de aluguel e animação casa-a-casa",
+      "owner_agent": "03_engenheiro_ui_hibrida.md",
+      "status": "pending",
+      "notes": "Painel carrinho por monopólio, substituição do preço pelo aluguel em tempo real no tabuleiro, cores distintas Verde/Azul e salto casa por casa."
+    },
+    {
+      "id": "LOTE-04",
+      "title": "Reset pós-partida, seleção exclusiva no P2P, prompt remoto de troca e câmera remota",
+      "owner_agent": "01_arquiteto_hibrido.md",
+      "status": "pending",
+      "notes": "Limpeza total ao voltar ao Setup, desabilitar peões/cores já escolhidos em tempo real no P2P, prompt remoto de troca e acompanhamento da câmera nos clientes."
     }
   ]
 }

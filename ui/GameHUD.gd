@@ -213,6 +213,10 @@ var _cached_tiles: Array[Dictionary] = []
 var _cached_player_colors: Dictionary[int, Color] = {}
 var _cached_owned_options: Array[Dictionary] = []
 var _cached_selected_tile: int = -1
+var _cached_owners_map: Dictionary[int, int] = {}
+var _cached_buildings_map: Dictionary[int, int] = {}
+var _cached_mortgaged_map: Dictionary[int, bool] = {}
+var _cached_tradable_map: Dictionary[int, bool] = {}
 var _cached_is_2d_cam: bool = false
 var _last_board_rect: Rect2 = Rect2(18.0, 18.0, 1418.0, 1044.0)
 var _last_layout_vp_size: Vector2 = Vector2.ZERO
@@ -1656,6 +1660,32 @@ func _refresh_trade_targets() -> void:
 		_trade_target_select.select(selected_idx)
 	_refresh_trade_dropdowns()
 
+func set_board_snapshot_meta(
+	owners_map: Dictionary[int, int],
+	buildings_map: Dictionary[int, int],
+	mortgaged_map: Dictionary[int, bool],
+	tradable_map: Dictionary[int, bool]
+) -> void:
+	_cached_owners_map = owners_map.duplicate()
+	_cached_buildings_map = buildings_map.duplicate()
+	_cached_mortgaged_map = mortgaged_map.duplicate()
+	_cached_tradable_map = tradable_map.duplicate()
+
+func _is_tile_tradable_in_cache(tile_idx: int) -> bool:
+	if _cached_tradable_map.has(tile_idx):
+		return bool(_cached_tradable_map[tile_idx])
+	if _cached_buildings_map.get(tile_idx, 0) > 0:
+		return false
+	if tile_idx >= 0 and tile_idx < _cached_tiles.size():
+		var g_name: String = str(_cached_tiles[tile_idx].get("group", ""))
+		if g_name != "":
+			for i: int in range(_cached_tiles.size()):
+				var t: Dictionary = _cached_tiles[i]
+				if str(t.get("type", "")) == "PROPERTY" and str(t.get("group", "")) == g_name:
+					if _cached_buildings_map.get(i, 0) > 0:
+						return false
+	return true
+
 func _refresh_trade_dropdowns() -> void:
 	_trade_offer_select.clear()
 	_trade_offer_select.add_item("Nenhuma escritura")
@@ -1665,7 +1695,7 @@ func _refresh_trade_dropdowns() -> void:
 		var current_props: Array = _cached_players[_cached_current_idx].get("properties", [])
 		for t_idx: Variant in current_props:
 			var idx_int: int = int(t_idx)
-			if idx_int >= 0 and idx_int < _cached_tiles.size():
+			if idx_int >= 0 and idx_int < _cached_tiles.size() and _is_tile_tradable_in_cache(idx_int):
 				_trade_offer_select.add_item(str(_cached_tiles[idx_int]["name"]))
 				_trade_offer_select.set_item_metadata(_trade_offer_select.item_count - 1, idx_int)
 
@@ -1681,7 +1711,7 @@ func _refresh_trade_dropdowns() -> void:
 				var target_props: Array = p.get("properties", [])
 				for t_idx: Variant in target_props:
 					var idx_int: int = int(t_idx)
-					if idx_int >= 0 and idx_int < _cached_tiles.size():
+					if idx_int >= 0 and idx_int < _cached_tiles.size() and _is_tile_tradable_in_cache(idx_int):
 						_trade_request_select.add_item(str(_cached_tiles[idx_int]["name"]))
 						_trade_request_select.set_item_metadata(_trade_request_select.item_count - 1, idx_int)
 				break
@@ -3501,7 +3531,7 @@ func refresh_hud(
 	_btn_end_turn.disabled = lock_controls or not can_end
 
 	if active_money < 0 and _btn_end_turn.visible:
-		_btn_end_turn.text = "Encerrar (Falência)"
+		_btn_end_turn.text = "Declarar Falência" if can_end else "Liquide seus bens"
 	elif _btn_end_turn.visible and not can_end and not is_bot_turn:
 		_btn_end_turn.text = "Aguarde..."
 	elif primary_action == "END_TURN" and _btn_end_turn.visible:
