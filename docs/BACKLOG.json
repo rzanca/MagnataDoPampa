@@ -139,14 +139,14 @@
       "id": "LOTE-16",
       "title": "Assets 3D autorais (.glb) via Blender 5.3 headless (peões, construções, dados e enfeites)",
       "owner_agent": "01_arquiteto_hibrido.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Gerar modelos modulares .glb via Blender headless em assets/models/ e integrar no Board3D.gd com fallback seguro."
     },
     {
       "id": "LOTE-17",
       "title": "Polimento final, bateria completa de testes e exportação v0.9.0",
       "owner_agent": "04_qa_devops.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Validar todos os scripts, mobile smoke, auditoria estática, incrementar versão e gerar pacote final Windows+Launcher e Android APK."
     }
   ]

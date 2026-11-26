@@ -74,6 +74,8 @@ var _mortgaged_cache: Dictionary[int, bool] = {}
 
 var _player_colors: Dictionary[int, Color] = {}
 var _token_nodes: Dictionary[int, Node3D] = {}
+var _token_sculpts: Dictionary[int, Node3D] = {}
+var _model_scene_cache: Dictionary[String, PackedScene] = {}
 var _token_medallions: Dictionary[int, Node3D] = {}
 var _token_stems: Dictionary[int, MeshInstance3D] = {}
 var _token_halos: Dictionary[int, MeshInstance3D] = {}
@@ -263,18 +265,24 @@ func _sync_token_medallions_to_camera(to_2d: bool, animate: bool) -> void:
 	for pid: int in _token_medallions.keys():
 		var med: Node3D = _token_medallions[pid]
 		var stem: MeshInstance3D = _token_stems.get(pid, null)
+		var sculpt: Node3D = _token_sculpts.get(pid, null)
+		var has_sculpt: bool = (sculpt != null and is_instance_valid(sculpt))
 		if med == null or not is_instance_valid(med):
 			continue
+		if has_sculpt:
+			sculpt.visible = not to_2d
 		if not animate or not is_inside_tree():
 			med.position = target_pos
 			med.quaternion = target_quat
 			med.scale = target_scale
+			med.visible = to_2d or not has_sculpt
 			if stem != null and is_instance_valid(stem):
 				stem.scale = target_stem_scale
-				stem.visible = not to_2d
+				stem.visible = (not to_2d) and not has_sculpt
 		else:
-			if stem != null and is_instance_valid(stem) and not to_2d:
-				stem.visible = true
+			med.visible = to_2d or not has_sculpt
+			if stem != null and is_instance_valid(stem):
+				stem.visible = (not to_2d) and not has_sculpt
 			var tw: Tween = create_tween()
 			_token_pose_tweens.append(tw)
 			tw.set_parallel(true)
@@ -283,7 +291,7 @@ func _sync_token_medallions_to_camera(to_2d: bool, animate: bool) -> void:
 			tw.tween_property(med, "position", target_pos, 0.42)
 			tw.tween_property(med, "quaternion", target_quat, 0.42)
 			tw.tween_property(med, "scale", target_scale, 0.42)
-			if stem != null and is_instance_valid(stem):
+			if stem != null and is_instance_valid(stem) and not has_sculpt:
 				tw.tween_property(stem, "scale", target_stem_scale, 0.36)
 
 func set_viewport_rect(rect: Rect2) -> void:
@@ -500,6 +508,7 @@ func reset_board_state() -> void:
 		if token != null and is_instance_valid(token):
 			token.queue_free()
 	_token_nodes.clear()
+	_token_sculpts.clear()
 	_token_medallions.clear()
 	_token_stems.clear()
 	_token_halos.clear()
@@ -514,6 +523,36 @@ func reset_board_state() -> void:
 	update_ownership(empty_owners, empty_mortgaged)
 	update_buildings(empty_buildings)
 	reset_camera_framing(false)
+
+func _instantiate_glb_model(res_path: String) -> Node3D:
+	if not ResourceLoader.exists(res_path):
+		return null
+	var scene: PackedScene = _model_scene_cache.get(res_path, null)
+	if scene == null:
+		var loaded: Resource = load(res_path)
+		if loaded is PackedScene:
+			scene = loaded as PackedScene
+			_model_scene_cache[res_path] = scene
+	if scene == null:
+		return null
+	var inst: Node = scene.instantiate()
+	if inst is Node3D:
+		return inst as Node3D
+	if inst != null:
+		inst.queue_free()
+	return null
+
+func _tint_glb_material(node: Node, target_mat_substr: String, mat_override: Material) -> void:
+	if node is MeshInstance3D:
+		var mi: MeshInstance3D = node as MeshInstance3D
+		if mi.mesh != null:
+			var surf_count: int = mi.mesh.get_surface_count()
+			for s_idx: int in range(surf_count):
+				var sm: Material = mi.get_active_material(s_idx)
+				if sm != null and target_mat_substr in sm.resource_name:
+					mi.set_surface_override_material(s_idx, mat_override)
+	for child: Node in node.get_children():
+		_tint_glb_material(child, target_mat_substr, mat_override)
 
 func _register_tween(tw: Tween) -> void:
 	var alive: Array[Tween] = []
@@ -1041,39 +1080,44 @@ func _add_tile_landmark_3d(root: Node3D, tile_idx: int, tile_data: Dictionary, t
 	var dark_mat: StandardMaterial3D = _make_vivid_material(Color("#1A221E"), 0.42, 0.20, 0.02)
 
 	if tile_idx == 0:
-		# Galpão Central / Partida: pórtico crioulo imponente com lanterna e seta dourada de saída
-		var lm: Node3D = Node3D.new()
-		lm.position = Vector3(-0.36, TILE_TOP_Y, -0.78)
-		root.add_child(lm)
-		var stone_mat: StandardMaterial3D = _make_vivid_material(Color("#5C5A52"), 0.65, 0.08, 0.04)
-		var roof_mat: StandardMaterial3D = _make_vivid_material(Color("#C24D27"), 0.38, 0.08, 0.14)
-		var lantern_mat: StandardMaterial3D = _make_vivid_material(Color("#FFE58A"), 0.16, 0.05, 0.90)
+		# Galpão Central / Partida: pórtico crioulo em GLB ou fallback procedural + seta dourada de saída
+		var galpao_glb: Node3D = _instantiate_glb_model("res://assets/models/prop_galpao.glb")
+		if galpao_glb != null:
+			galpao_glb.position = Vector3(-0.36, TILE_TOP_Y, -0.78)
+			root.add_child(galpao_glb)
+		else:
+			var lm: Node3D = Node3D.new()
+			lm.position = Vector3(-0.36, TILE_TOP_Y, -0.78)
+			root.add_child(lm)
+			var stone_mat: StandardMaterial3D = _make_vivid_material(Color("#5C5A52"), 0.65, 0.08, 0.04)
+			var roof_mat: StandardMaterial3D = _make_vivid_material(Color("#C24D27"), 0.38, 0.08, 0.14)
+			var lantern_mat: StandardMaterial3D = _make_vivid_material(Color("#FFE58A"), 0.16, 0.05, 0.90)
 
-		var plinth: BoxMesh = BoxMesh.new()
-		plinth.size = Vector3(1.06, 0.07, 0.42)
-		_add_mesh_part(lm, plinth, Vector3(0.0, 0.035, 0.0), stone_mat)
+			var plinth: BoxMesh = BoxMesh.new()
+			plinth.size = Vector3(1.06, 0.07, 0.42)
+			_add_mesh_part(lm, plinth, Vector3(0.0, 0.035, 0.0), stone_mat)
 
-		var pillar: BoxMesh = BoxMesh.new()
-		pillar.size = Vector3(0.11, 0.52, 0.11)
-		_add_mesh_part(lm, pillar, Vector3(-0.36, 0.32, 0.0), wood_mat)
-		_add_mesh_part(lm, pillar, Vector3(0.36, 0.32, 0.0), wood_mat)
+			var pillar: BoxMesh = BoxMesh.new()
+			pillar.size = Vector3(0.11, 0.52, 0.11)
+			_add_mesh_part(lm, pillar, Vector3(-0.36, 0.32, 0.0), wood_mat)
+			_add_mesh_part(lm, pillar, Vector3(0.36, 0.32, 0.0), wood_mat)
 
-		var beam: BoxMesh = BoxMesh.new()
-		beam.size = Vector3(0.96, 0.09, 0.15)
-		_add_mesh_part(lm, beam, Vector3(0.0, 0.56, 0.0), wood_mat)
+			var beam: BoxMesh = BoxMesh.new()
+			beam.size = Vector3(0.96, 0.09, 0.15)
+			_add_mesh_part(lm, beam, Vector3(0.0, 0.56, 0.0), wood_mat)
 
-		var roof: PrismMesh = PrismMesh.new()
-		roof.size = Vector3(1.14, 0.30, 0.44)
-		_add_mesh_part(lm, roof, Vector3(0.0, 0.74, 0.0), roof_mat)
+			var roof: PrismMesh = PrismMesh.new()
+			roof.size = Vector3(1.14, 0.30, 0.44)
+			_add_mesh_part(lm, roof, Vector3(0.0, 0.74, 0.0), roof_mat)
 
-		var crest: BoxMesh = BoxMesh.new()
-		crest.size = Vector3(0.16, 0.16, 0.07)
-		_add_mesh_part(lm, crest, Vector3(0.0, 0.56, 0.08), gold_mat, Vector3(0.0, 0.0, 45.0))
+			var crest: BoxMesh = BoxMesh.new()
+			crest.size = Vector3(0.16, 0.16, 0.07)
+			_add_mesh_part(lm, crest, Vector3(0.0, 0.56, 0.08), gold_mat, Vector3(0.0, 0.0, 45.0))
 
-		var lantern: SphereMesh = SphereMesh.new()
-		lantern.radius = 0.058
-		lantern.height = 0.116
-		_add_mesh_part(lm, lantern, Vector3(0.0, 0.45, 0.0), lantern_mat)
+			var lantern: SphereMesh = SphereMesh.new()
+			lantern.radius = 0.058
+			lantern.height = 0.116
+			_add_mesh_part(lm, lantern, Vector3(0.0, 0.45, 0.0), lantern_mat)
 
 		# Seta dourada de direção de partida no quadrante superior direito
 		var arrow_root: Node3D = Node3D.new()
@@ -1153,7 +1197,12 @@ func _add_tile_landmark_3d(root: Node3D, tile_idx: int, tile_data: Dictionary, t
 		return
 
 	if tile_idx == 20:
-		# Feriadão 20 de Setembro: monumento com pedestal e Bandeira do RS imponente com ondulação suave
+		# Feriadão 20 de Setembro: monumento em GLB (ou bandeira procedural articulada como fallback)
+		var mon_glb: Node3D = _instantiate_glb_model("res://assets/models/prop_20_setembro.glb")
+		if mon_glb != null:
+			mon_glb.position = Vector3(-0.78, TILE_TOP_Y, -0.76)
+			root.add_child(mon_glb)
+			return
 		var lm: Node3D = Node3D.new()
 		lm.position = Vector3(-0.78, TILE_TOP_Y, -0.76)
 		root.add_child(lm)
@@ -1285,8 +1334,8 @@ func _add_tile_landmark_3d(root: Node3D, tile_idx: int, tile_data: Dictionary, t
 		_add_mesh_part(barrier, stripe_b, Vector3(0.18, 0.24, 0.0), dark_mat)
 		return
 
-	# Companhias e Impostos: miniaturas elegantes na borda interna (onde terrenos têm o friso de casas)
-	if tile_type != "COMPANY" and tile_type != "TAX":
+	# Companhias, Sorte ou Azar e Impostos: miniaturas 3D elegantes na borda interna
+	if tile_type != "COMPANY" and tile_type != "TAX" and tile_type != "CHANCE":
 		return
 
 	var edge_anchor: Vector3 = Vector3.ZERO
@@ -1309,8 +1358,18 @@ func _add_tile_landmark_3d(root: Node3D, tile_idx: int, tile_data: Dictionary, t
 	prop_root.rotation_degrees = Vector3(0.0, edge_yaw, 0.0)
 	root.add_child(prop_root)
 
+	if tile_type == "CHANCE":
+		var chance_glb: Node3D = _instantiate_glb_model("res://assets/models/prop_sorte_azar.glb")
+		if chance_glb != null:
+			prop_root.add_child(chance_glb)
+		return
+
 	if tile_type == "TAX":
-		# Pilha de moedas douradas com faixa rubi de imposto
+		var tax_glb: Node3D = _instantiate_glb_model("res://assets/models/prop_imposto.glb")
+		if tax_glb != null:
+			prop_root.add_child(tax_glb)
+			return
+		# Pilha de moedas douradas com faixa rubi de imposto (fallback procedural)
 		var coin_c: CylinderMesh = CylinderMesh.new()
 		coin_c.top_radius = 0.11
 		coin_c.bottom_radius = 0.11
@@ -1356,6 +1415,10 @@ func _add_tile_landmark_3d(root: Node3D, tile_idx: int, tile_data: Dictionary, t
 			funnel.height = 0.14
 			_add_mesh_part(prop_root, funnel, Vector3(0.08, 0.18, 0.0), _make_vivid_material(Color("#E63946"), 0.30, 0.08, 0.18))
 		"comp_cooperativa_agricola":
+			var coop_glb: Node3D = _instantiate_glb_model("res://assets/models/prop_companhia.glb")
+			if coop_glb != null:
+				prop_root.add_child(coop_glb)
+				return
 			var silo: CylinderMesh = CylinderMesh.new()
 			silo.top_radius = 0.10
 			silo.bottom_radius = 0.10
@@ -1704,47 +1767,52 @@ func update_buildings(buildings_map: Dictionary[int, int]) -> void:
 		else:
 			anchor_pos = Vector3(-tile_w * 0.5 + stripe_center_offset, TILE_TOP_Y + 0.026, 0.0)
 
+		var building_yaw: float = 0.0 if (tile_idx > 0 and tile_idx < 10) else (-90.0 if (tile_idx > 10 and tile_idx < 20) else (180.0 if (tile_idx > 20 and tile_idx < 30) else 90.0))
 		if level >= 5:
-			# Hotel 3D imponente em dois pavimentos + torre central dourada (claramente distinto das casas)
+			# Estância Luxo / Hotel 3D em GLB (ou fallback procedural)
 			var hotel_node: Node3D = Node3D.new()
 			hotel_node.position = anchor_pos
+			var hotel_glb: Node3D = _instantiate_glb_model("res://assets/models/estancia_hotel.glb")
+			if hotel_glb != null:
+				hotel_glb.rotation_degrees = Vector3(0.0, building_yaw, 0.0)
+				hotel_node.add_child(hotel_glb)
+			else:
+				var plinth: BoxMesh = BoxMesh.new()
+				plinth.size = Vector3(0.62, 0.055, 0.25) if is_horiz_stripe else Vector3(0.25, 0.055, 0.62)
+				_add_mesh_part(hotel_node, plinth, Vector3(0.0, 0.028, 0.0), hotel_trim_mat)
 
-			var plinth: BoxMesh = BoxMesh.new()
-			plinth.size = Vector3(0.62, 0.055, 0.25) if is_horiz_stripe else Vector3(0.25, 0.055, 0.62)
-			_add_mesh_part(hotel_node, plinth, Vector3(0.0, 0.028, 0.0), hotel_trim_mat)
+				var main_body: BoxMesh = BoxMesh.new()
+				main_body.size = Vector3(0.56, 0.42, 0.22) if is_horiz_stripe else Vector3(0.22, 0.42, 0.56)
+				_add_mesh_part(hotel_node, main_body, Vector3(0.0, 0.26, 0.0), hotel_mat)
 
-			var main_body: BoxMesh = BoxMesh.new()
-			main_body.size = Vector3(0.56, 0.42, 0.22) if is_horiz_stripe else Vector3(0.22, 0.42, 0.56)
-			_add_mesh_part(hotel_node, main_body, Vector3(0.0, 0.26, 0.0), hotel_mat)
+				var win_band: BoxMesh = BoxMesh.new()
+				win_band.size = Vector3(0.575, 0.06, 0.17) if is_horiz_stripe else Vector3(0.17, 0.06, 0.575)
+				_add_mesh_part(hotel_node, win_band, Vector3(0.0, 0.36, 0.0), window_mat)
+				_add_mesh_part(hotel_node, win_band, Vector3(0.0, 0.24, 0.0), window_mat)
+				_add_mesh_part(hotel_node, win_band, Vector3(0.0, 0.12, 0.0), window_mat)
 
-			var win_band: BoxMesh = BoxMesh.new()
-			win_band.size = Vector3(0.575, 0.06, 0.17) if is_horiz_stripe else Vector3(0.17, 0.06, 0.575)
-			_add_mesh_part(hotel_node, win_band, Vector3(0.0, 0.36, 0.0), window_mat)
-			_add_mesh_part(hotel_node, win_band, Vector3(0.0, 0.24, 0.0), window_mat)
-			_add_mesh_part(hotel_node, win_band, Vector3(0.0, 0.12, 0.0), window_mat)
+				var cornice: BoxMesh = BoxMesh.new()
+				cornice.size = Vector3(0.60, 0.048, 0.25) if is_horiz_stripe else Vector3(0.25, 0.048, 0.60)
+				_add_mesh_part(hotel_node, cornice, Vector3(0.0, 0.485, 0.0), hotel_trim_mat)
 
-			var cornice: BoxMesh = BoxMesh.new()
-			cornice.size = Vector3(0.60, 0.048, 0.25) if is_horiz_stripe else Vector3(0.25, 0.048, 0.60)
-			_add_mesh_part(hotel_node, cornice, Vector3(0.0, 0.485, 0.0), hotel_trim_mat)
+				var upper_tower: BoxMesh = BoxMesh.new()
+				upper_tower.size = Vector3(0.32, 0.16, 0.21) if is_horiz_stripe else Vector3(0.21, 0.16, 0.32)
+				_add_mesh_part(hotel_node, upper_tower, Vector3(0.0, 0.585, 0.0), hotel_mat)
 
-			var upper_tower: BoxMesh = BoxMesh.new()
-			upper_tower.size = Vector3(0.32, 0.16, 0.21) if is_horiz_stripe else Vector3(0.21, 0.16, 0.32)
-			_add_mesh_part(hotel_node, upper_tower, Vector3(0.0, 0.585, 0.0), hotel_mat)
+				var roof: PrismMesh = PrismMesh.new()
+				roof.size = Vector3(0.36, 0.16, 0.23) if is_horiz_stripe else Vector3(0.23, 0.16, 0.36)
+				_add_mesh_part(hotel_node, roof, Vector3(0.0, 0.72, 0.0), hotel_roof_mat)
 
-			var roof: PrismMesh = PrismMesh.new()
-			roof.size = Vector3(0.36, 0.16, 0.23) if is_horiz_stripe else Vector3(0.23, 0.16, 0.36)
-			_add_mesh_part(hotel_node, roof, Vector3(0.0, 0.72, 0.0), hotel_roof_mat)
-
-			var crown_gem: SphereMesh = SphereMesh.new()
-			crown_gem.radius = 0.045
-			crown_gem.height = 0.09
-			_add_mesh_part(hotel_node, crown_gem, Vector3(0.0, 0.81, 0.0), hotel_roof_mat)
+				var crown_gem: SphereMesh = SphereMesh.new()
+				crown_gem.radius = 0.045
+				crown_gem.height = 0.09
+				_add_mesh_part(hotel_node, crown_gem, Vector3(0.0, 0.81, 0.0), hotel_roof_mat)
 
 			overlay.add_child(hotel_node)
 			if should_pop:
 				_animate_building_pop(hotel_node, anchor_pos, true)
 		else:
-			# 1 a 4 casas esmeralda nítidas sobre o friso fino (sem sobrepor os peões)
+			# 1 a 4 casas campeiras em GLB sobre o friso fino (ou fallback procedural)
 			var spacing: float = 0.21
 			for h: int in range(level):
 				var offset_val: float = (float(h) - float(level - 1) * 0.5) * spacing
@@ -1753,29 +1821,34 @@ func update_buildings(buildings_map: Dictionary[int, int]) -> void:
 				var final_pos: Vector3 = anchor_pos + shift
 				house_node.position = final_pos
 
-				var h_base: BoxMesh = BoxMesh.new()
-				h_base.size = Vector3(0.175, 0.036, 0.175)
-				_add_mesh_part(house_node, h_base, Vector3(0.0, 0.018, 0.0), base_mat)
+				var casa_glb: Node3D = _instantiate_glb_model("res://assets/models/casa_campeira.glb")
+				if casa_glb != null:
+					casa_glb.rotation_degrees = Vector3(0.0, building_yaw, 0.0)
+					house_node.add_child(casa_glb)
+				else:
+					var h_base: BoxMesh = BoxMesh.new()
+					h_base.size = Vector3(0.175, 0.036, 0.175)
+					_add_mesh_part(house_node, h_base, Vector3(0.0, 0.018, 0.0), base_mat)
 
-				var h_body: BoxMesh = BoxMesh.new()
-				h_body.size = Vector3(0.16, 0.21, 0.16)
-				_add_mesh_part(house_node, h_body, Vector3(0.0, 0.135, 0.0), house_mat)
+					var h_body: BoxMesh = BoxMesh.new()
+					h_body.size = Vector3(0.16, 0.21, 0.16)
+					_add_mesh_part(house_node, h_body, Vector3(0.0, 0.135, 0.0), house_mat)
 
-				var h_door: BoxMesh = BoxMesh.new()
-				h_door.size = Vector3(0.048, 0.09, 0.168) if is_horiz_stripe else Vector3(0.168, 0.09, 0.048)
-				_add_mesh_part(house_node, h_door, Vector3(0.0, 0.08, 0.0), door_mat)
+					var h_door: BoxMesh = BoxMesh.new()
+					h_door.size = Vector3(0.048, 0.09, 0.168) if is_horiz_stripe else Vector3(0.168, 0.09, 0.048)
+					_add_mesh_part(house_node, h_door, Vector3(0.0, 0.08, 0.0), door_mat)
 
-				var h_win: BoxMesh = BoxMesh.new()
-				h_win.size = Vector3(0.168, 0.046, 0.075) if is_horiz_stripe else Vector3(0.075, 0.046, 0.168)
-				_add_mesh_part(house_node, h_win, Vector3(0.0, 0.165, 0.0), window_mat)
+					var h_win: BoxMesh = BoxMesh.new()
+					h_win.size = Vector3(0.168, 0.046, 0.075) if is_horiz_stripe else Vector3(0.075, 0.046, 0.168)
+					_add_mesh_part(house_node, h_win, Vector3(0.0, 0.165, 0.0), window_mat)
 
-				var h_roof: PrismMesh = PrismMesh.new()
-				h_roof.size = Vector3(0.20, 0.135, 0.20)
-				_add_mesh_part(house_node, h_roof, Vector3(0.0, 0.305, 0.0), roof_mat)
+					var h_roof: PrismMesh = PrismMesh.new()
+					h_roof.size = Vector3(0.20, 0.135, 0.20)
+					_add_mesh_part(house_node, h_roof, Vector3(0.0, 0.305, 0.0), roof_mat)
 
-				var h_chimney: BoxMesh = BoxMesh.new()
-				h_chimney.size = Vector3(0.036, 0.085, 0.036)
-				_add_mesh_part(house_node, h_chimney, Vector3(0.055, 0.34, 0.03), base_mat)
+					var h_chimney: BoxMesh = BoxMesh.new()
+					h_chimney.size = Vector3(0.036, 0.085, 0.036)
+					_add_mesh_part(house_node, h_chimney, Vector3(0.055, 0.34, 0.03), base_mat)
 
 				overlay.add_child(house_node)
 				if should_pop and h == level - 1:
@@ -1932,6 +2005,7 @@ func setup_tokens(players: Array[Dictionary]) -> void:
 	for child: Node in _tokens_root.get_children():
 		child.queue_free()
 	_token_nodes.clear()
+	_token_sculpts.clear()
 	_token_medallions.clear()
 	_token_stems.clear()
 	_token_halos.clear()
@@ -2062,6 +2136,18 @@ func _build_gaucho_pawn_3d(player_id: int, pawn_id: String, pawn_code: String, p
 	stem_cyl.radial_segments = 20
 	var stem_inst: MeshInstance3D = _add_mesh_part(root, stem_cyl, Vector3(0.0, 0.155, 0.0), gold_mat)
 	_token_stems[player_id] = stem_inst
+
+	# Escultura 3D tematica do peao (Blender GLB) com tinting na cor do jogador
+	var pawn_glb_path: String = "res://assets/models/pawn_%s.glb" % pawn_id
+	var sculpt_glb: Node3D = _instantiate_glb_model(pawn_glb_path)
+	if sculpt_glb != null:
+		sculpt_glb.name = "SculptPawn"
+		sculpt_glb.position = Vector3(0.0, 0.082, 0.0)
+		sculpt_glb.rotation_degrees = Vector3(0.0, 26.0, 0.0)
+		sculpt_glb.scale = Vector3(1.12, 1.12, 1.12)
+		_tint_glb_material(sculpt_glb, "PlayerPrimary", player_mat)
+		root.add_child(sculpt_glb)
+		_token_sculpts[player_id] = sculpt_glb
 
 	# 2. Medalhão / Totem circular 3D com a cor do jogador, aro contrastante e ilustração 256x256 nítida
 	var medallion: Node3D = Node3D.new()
@@ -2341,6 +2427,9 @@ func _build_center_dice() -> void:
 		_dice_nodes.append(die)
 
 func _create_single_die_3d() -> Node3D:
+	var die_glb: Node3D = _instantiate_glb_model("res://assets/models/dado_pampa.glb")
+	if die_glb != null:
+		return die_glb
 	var root: Node3D = Node3D.new()
 	var die_size: float = 0.66
 	var half: float = die_size * 0.5
