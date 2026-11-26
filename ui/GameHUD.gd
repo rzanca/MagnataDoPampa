@@ -21,6 +21,7 @@ signal forfeit_match_requested
 signal menu_requested
 signal restart_match_requested
 signal quit_game_requested
+signal trophies_requested
 signal camera_toggle_requested
 signal camera_follow_toggle_requested
 signal camera_reset_requested
@@ -88,6 +89,9 @@ var _round_badge_style: StyleBoxFlat
 var _round_label: Label
 var _bank_label: Label
 var _tile_info_label: Label
+var _mission_bar: PanelContainer
+var _mission_bar_style: StyleBoxFlat
+var _mission_label: Label
 
 # Abas centrais (Estanceiros | Diário)
 var _active_tab: int = TAB_PLAYERS
@@ -192,6 +196,10 @@ var _pause_menu_btn: Button
 var _pause_quit_btn: Button
 var _help_overlay: Control
 var _help_card: PanelContainer
+var _trophies_overlay: Control
+var _trophies_card: PanelContainer
+var _trophies_list_box: VBoxContainer
+var _trophies_summary_label: Label
 
 var _victory_overlay: Control
 var _victory_banner: PanelContainer
@@ -969,6 +977,23 @@ func _build_hero_zone(parent: VBoxContainer) -> void:
 	_tile_info_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tile_box.add_child(_tile_info_label)
 
+	_mission_bar = PanelContainer.new()
+	_mission_bar.visible = false
+	_mission_bar_style = _make_panel_style("#182112", "#D4AF37", 8, 1)
+	_mission_bar_style.content_margin_left = 10.0
+	_mission_bar_style.content_margin_right = 10.0
+	_mission_bar_style.content_margin_top = 4.0
+	_mission_bar_style.content_margin_bottom = 4.0
+	_mission_bar.add_theme_stylebox_override("panel", _mission_bar_style)
+	hero_vbox.add_child(_mission_bar)
+
+	_mission_label = Label.new()
+	_mission_label.text = ""
+	_mission_label.add_theme_font_size_override("font_size", _fs(11.0))
+	_mission_label.add_theme_color_override("font_color", Color("#F6DF8F"))
+	_mission_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_mission_bar.add_child(_mission_label)
+
 func _build_tabs_zone(parent: VBoxContainer) -> void:
 	# Seletor segmentado de 2 abas (Estanceiros | Diário) — gestão de escrituras centralizada na Carta do Lote
 	var tabs_bar: HBoxContainer = HBoxContainer.new()
@@ -1244,6 +1269,7 @@ func _build_modals() -> void:
 	_build_auction_modal()
 	_build_pause_modal()
 	_build_help_modal()
+	_build_trophies_modal()
 	_build_victory_modal()
 	_build_chance_card_modal()
 	_build_settings_modal()
@@ -2570,6 +2596,15 @@ func _build_pause_modal() -> void:
 	)
 	vbox.add_child(b_rules)
 
+	var b_trophies: Button = Button.new()
+	b_trophies.text = "Troféus de Carreira"
+	_apply_button_theme(b_trophies, "#262313", "#38331B", "#1A180D", "#D4AF37", Color("#FFF2C6"), false, btn_h, btn_fs, 12.0, true)
+	b_trophies.pressed.connect(func() -> void:
+		hide_pause_modal()
+		trophies_requested.emit()
+	)
+	vbox.add_child(b_trophies)
+
 	_pause_bot_leave_btn = Button.new()
 	_pause_bot_leave_btn.text = "Passar Vaga para [BOT]"
 	_apply_button_theme(_pause_bot_leave_btn, "#18364A", "#214A66", "#112736", "#4EA8DE", Color("#D8F3FF"), false, btn_h, btn_fs, 12.0, true)
@@ -2729,6 +2764,115 @@ func show_help_modal() -> void:
 func hide_help_modal() -> void:
 	if _help_overlay != null:
 		_help_overlay.visible = false
+
+func _build_trophies_modal() -> void:
+	_trophies_overlay = _create_modal_backdrop(hide_trophies_modal)
+
+	var center: CenterContainer = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trophies_overlay.add_child(center)
+
+	_trophies_card = PanelContainer.new()
+	_trophies_card.custom_minimum_size = Vector2(540.0 if _is_touch_mode else 500.0, 0.0)
+	var card_style: StyleBoxFlat = _make_panel_style("#121B16", "#D4AF37", 18, 2)
+	card_style.shadow_size = 24
+	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.65)
+	_trophies_card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(_trophies_card)
+
+	var margin: MarginContainer = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_top", 20)
+	margin.add_theme_constant_override("margin_bottom", 20)
+	_trophies_card.add_child(margin)
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	margin.add_child(vbox)
+
+	var title_lbl: Label = Label.new()
+	title_lbl.text = "GALERIA DE TROFÉUS"
+	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		title_lbl.add_theme_font_override("font", _bold_font)
+	title_lbl.add_theme_font_size_override("font_size", _fs(20.0))
+	title_lbl.add_theme_color_override("font_color", Color("#F5D06F"))
+	vbox.add_child(title_lbl)
+
+	_enable_modal_drag(_trophies_card, title_lbl, _trophies_overlay)
+
+	_trophies_summary_label = Label.new()
+	_trophies_summary_label.text = "0 de 6 troféus conquistados"
+	_trophies_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_trophies_summary_label.add_theme_font_size_override("font_size", _fs(12.5))
+	_trophies_summary_label.add_theme_color_override("font_color", Color("#B9D4C4"))
+	vbox.add_child(_trophies_summary_label)
+
+	var scroll: ScrollContainer = ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0.0, 320.0 if _is_touch_mode else 280.0)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vbox.add_child(scroll)
+
+	_trophies_list_box = VBoxContainer.new()
+	_trophies_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_trophies_list_box.add_theme_constant_override("separation", 8)
+	scroll.add_child(_trophies_list_box)
+
+	var btn_close: Button = Button.new()
+	btn_close.text = "Fechar" if _is_touch_mode else "Fechar [ESC]"
+	_apply_button_theme(btn_close, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), true, _bh(42.0), _fs(14.0), 12.0, true)
+	btn_close.pressed.connect(hide_trophies_modal)
+	vbox.add_child(btn_close)
+
+func show_trophies_modal(trophies: Array[Dictionary]) -> void:
+	if _trophies_overlay == null or _trophies_list_box == null:
+		return
+	for ch: Node in _trophies_list_box.get_children():
+		ch.queue_free()
+	var unlocked_cnt: int = 0
+	for item: Dictionary in trophies:
+		var is_unlocked: bool = bool(item.get("unlocked", false))
+		if is_unlocked:
+			unlocked_cnt += 1
+		var card: PanelContainer = PanelContainer.new()
+		var c_sb: StyleBoxFlat = _make_panel_style("#172C20" if is_unlocked else "#121A16", "#D4AF37" if is_unlocked else "#2B3D34", 10, 1)
+		c_sb.content_margin_left = 12.0
+		c_sb.content_margin_right = 12.0
+		c_sb.content_margin_top = 8.0
+		c_sb.content_margin_bottom = 8.0
+		card.add_theme_stylebox_override("panel", c_sb)
+		_trophies_list_box.add_child(card)
+
+		var row_vb: VBoxContainer = VBoxContainer.new()
+		row_vb.add_theme_constant_override("separation", 2)
+		card.add_child(row_vb)
+
+		var hdr_lbl: Label = Label.new()
+		var badge_prefix: String = "[CONQUISTADO] " if is_unlocked else "[BLOQUEADO] "
+		hdr_lbl.text = badge_prefix + str(item.get("title", "Troféu"))
+		if _bold_font != null:
+			hdr_lbl.add_theme_font_override("font", _bold_font)
+		hdr_lbl.add_theme_font_size_override("font_size", _fs(13.5))
+		hdr_lbl.add_theme_color_override("font_color", Color("#F8D568") if is_unlocked else Color("#7F9588"))
+		row_vb.add_child(hdr_lbl)
+
+		var desc_lbl: Label = Label.new()
+		desc_lbl.text = str(item.get("desc", ""))
+		desc_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		desc_lbl.add_theme_font_size_override("font_size", _fs(12.0))
+		desc_lbl.add_theme_color_override("font_color", Color("#E4F2EA") if is_unlocked else Color("#6C7E73"))
+		row_vb.add_child(desc_lbl)
+
+	if _trophies_summary_label != null:
+		_trophies_summary_label.text = "%d de %d troféus conquistados" % [unlocked_cnt, trophies.size()]
+	_trophies_overlay.move_to_front()
+	_trophies_overlay.visible = true
+
+func hide_trophies_modal() -> void:
+	if _trophies_overlay != null:
+		_trophies_overlay.visible = false
 
 # 5. Modal de Vitória / Fim de Jogo
 func _build_victory_modal() -> void:
@@ -4648,6 +4792,7 @@ func hide_all_modals() -> void:
 	hide_auction_modal()
 	hide_pause_modal()
 	hide_help_modal()
+	hide_trophies_modal()
 	hide_victory_modal()
 	hide_event_toast()
 
@@ -4766,6 +4911,28 @@ func set_round_info(round_num: int, is_market_cycle: bool, season_info: Dictiona
 		if _round_badge != null:
 			var s_tip2: String = "\nEstação (%s): %s" % [season_label, season_effect] if season_label != "" else ""
 			_round_badge.tooltip_text = ("Rodada %d (avança quando todos os jogadores ativos completam sua vez)" % safe_round) + s_tip2
+
+func set_secret_mission(mission: Dictionary) -> void:
+	if _mission_bar == null or _mission_label == null:
+		return
+	if mission.is_empty():
+		_mission_bar.visible = false
+		return
+	var title: String = str(mission.get("title", "Missão"))
+	var desc: String = str(mission.get("desc", ""))
+	var reward: int = int(mission.get("reward", 600))
+	var completed: bool = bool(mission.get("completed", false))
+	_mission_bar.visible = true
+	if completed:
+		_mission_label.text = "★ Missão Cumprida (%s): +P$ %d creditados!" % [title, reward]
+		_mission_bar_style.bg_color = Color("#163826")
+		_mission_bar_style.border_color = Color("#52B788")
+		_mission_label.add_theme_color_override("font_color", Color("#B7FFD6"))
+	else:
+		_mission_label.text = "Missão Secreta (%s): %s (+P$ %d)" % [title, desc, reward]
+		_mission_bar_style.bg_color = Color("#182112")
+		_mission_bar_style.border_color = Color("#D4AF37")
+		_mission_label.add_theme_color_override("font_color", Color("#F6DF8F"))
 
 func set_camera_mode_label(is_2d: bool) -> void:
 	_cached_is_2d_cam = is_2d

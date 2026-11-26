@@ -28,6 +28,23 @@ const DYNAMIC_NET_WORTH_GOAL: int = 12000
 const DYNAMIC_MONOPOLY_GOAL: int = 3
 const SEASON_ORDER: Array[String] = ["PRIMAVERA", "VERAO", "OUTONO", "INVERNO"]
 const PREFS_FILE_PATH: String = "user://preferences.cfg"
+const ACHIEVEMENTS_FILE_PATH: String = "user://achievements.cfg"
+const SECRET_MISSION_REWARD: int = 600
+const SECRET_MISSIONS: Array[Dictionary] = [
+	{"id": "CONSTRUCTOR", "title": "Mestre de Obras", "desc": "Ergue 4 construções (casas/estâncias).", "reward": 600},
+	{"id": "MAGNATE", "title": "Cofre Cheio", "desc": "Acumule P$ 4.000 ou mais em caixa vivo.", "reward": 600},
+	{"id": "BARON", "title": "Barão do Pampa", "desc": "Domine 6 ou mais escrituras simultâneas.", "reward": 600},
+	{"id": "UTILITY_KING", "title": "Senhor das Rotas", "desc": "Controle 2 ou mais Companhias/Estações.", "reward": 600},
+	{"id": "LANDLORD", "title": "Monopolista Nativo", "desc": "Complete 1 monopólio inteiro de cor.", "reward": 600}
+]
+const CAREER_TROPHIES: Array[Dictionary] = [
+	{"id": "primeiro_galpao", "title": "Primeiro Galpão", "desc": "Vença uma partida completa no Magnata do Pampa."},
+	{"id": "arrematador", "title": "Martelo de Ouro", "desc": "Arremate um lote em leilão competitivo."},
+	{"id": "pacto_honra", "title": "Pacto de Galpão", "desc": "Feche uma negociação com Parceria Campeira."},
+	{"id": "rei_da_soja", "title": "Rei da Safra", "desc": "Vença com patrimônio igual ou superior a P$ 10.000."},
+	{"id": "esquadrao_pampa", "title": "Esquadrão Campeiro", "desc": "Conquiste vitória jogando em Modo de Times."},
+	{"id": "campeao_inverno", "title": "Soberano das Estações", "desc": "Vença uma partida no modo Estância Dinâmica."}
+]
 const CHANCE_AUTO_DURATIONS: Dictionary[String, float] = {
 	"short": 2.5,
 	"default": 4.5,
@@ -87,6 +104,10 @@ const DEFAULT_RENT_WAIVER_ROUNDS: int = 3
 var _pending_trade_offer: Dictionary = {}
 var _next_trade_offer_id: int = 1
 var _rent_waiver_pacts: Array[Dictionary] = []
+var _secret_missions: Dictionary[int, Dictionary] = {}
+var _local_secret_mission: Dictionary = {}
+var _unlocked_trophies: Dictionary[String, String] = {}
+var achievements_file_path: String = ACHIEVEMENTS_FILE_PATH
 var _auction_state: Dictionary = {}
 var _pending_periodic_auction: bool = false
 var _auction_bot_token: int = 0
@@ -119,6 +140,7 @@ var _preferences: Dictionary = {
 
 func _ready() -> void:
 	_load_preferences()
+	_load_achievements()
 	load_board_data()
 	load_chance_cards()
 	_setup_visuals()
@@ -301,6 +323,7 @@ func _setup_visuals() -> void:
 	hud.forfeit_match_requested.connect(_on_human_forfeit_requested)
 	hud.menu_requested.connect(open_setup_screen)
 	hud.restart_match_requested.connect(_on_restart_match_requested)
+	hud.trophies_requested.connect(_on_trophies_requested)
 	hud.quit_game_requested.connect(_on_quit_game_requested)
 	hud.camera_toggle_requested.connect(toggle_camera_view)
 	hud.camera_follow_toggle_requested.connect(_on_camera_follow_toggled)
@@ -343,6 +366,7 @@ func _setup_visuals() -> void:
 	setup_screen.start_match_requested.connect(start_match_from_setup)
 	setup_screen.help_requested.connect(_on_help_requested)
 	setup_screen.settings_requested.connect(_on_settings_requested)
+	setup_screen.trophies_requested.connect(_on_trophies_requested)
 	setup_screen.quit_game_requested.connect(_on_quit_game_requested)
 	setup_screen.host_room_requested.connect(_on_host_room_requested)
 	setup_screen.join_room_requested.connect(_on_join_room_requested)
@@ -366,6 +390,61 @@ func _on_settings_requested() -> void:
 	if hud != null:
 		hud.apply_preferences(_preferences)
 		hud.show_settings_modal()
+
+func _on_trophies_requested() -> void:
+	if hud != null:
+		hud.show_trophies_modal(get_trophies_status())
+
+func _load_achievements() -> void:
+	_unlocked_trophies.clear()
+	var cfg: ConfigFile = ConfigFile.new()
+	if cfg.load(achievements_file_path) != OK:
+		return
+	for t_def: Dictionary in CAREER_TROPHIES:
+		var tid: String = str(t_def.get("id", ""))
+		if tid != "" and cfg.has_section_key("trophies", tid):
+			var stamp: String = str(cfg.get_value("trophies", tid, ""))
+			if stamp != "":
+				_unlocked_trophies[tid] = stamp
+
+func _save_achievements() -> void:
+	var cfg: ConfigFile = ConfigFile.new()
+	for tid: String in _unlocked_trophies.keys():
+		cfg.set_value("trophies", tid, _unlocked_trophies[tid])
+	var _err: Error = cfg.save(achievements_file_path)
+
+func unlock_trophy(trophy_id: String, show_toast: bool = true) -> bool:
+	if trophy_id == "" or _unlocked_trophies.has(trophy_id):
+		return false
+	var trophy_title: String = trophy_id
+	var found: bool = false
+	for t_def: Dictionary in CAREER_TROPHIES:
+		if str(t_def.get("id", "")) == trophy_id:
+			found = true
+			trophy_title = str(t_def.get("title", trophy_id))
+			break
+	if not found:
+		return false
+	_unlocked_trophies[trophy_id] = Time.get_datetime_string_from_system()
+	_save_achievements()
+	_log_both("🏆 Troféu de Carreira desbloqueado: %s!" % trophy_title)
+	if show_toast and hud != null:
+		hud.show_event_toast("Troféu Desbloqueado!", trophy_title, "positive")
+	return true
+
+func get_trophies_status() -> Array[Dictionary]:
+	var out: Array[Dictionary] = []
+	for t_def: Dictionary in CAREER_TROPHIES:
+		var tid: String = str(t_def.get("id", ""))
+		var unlocked: bool = _unlocked_trophies.has(tid)
+		out.append({
+			"id": tid,
+			"title": str(t_def.get("title", "")),
+			"desc": str(t_def.get("desc", "")),
+			"unlocked": unlocked,
+			"unlocked_at": str(_unlocked_trophies.get(tid, ""))
+		})
+	return out
 
 func _on_quit_game_requested() -> void:
 	_match_active = false
@@ -523,6 +602,8 @@ func _reset_match_state() -> void:
 	_last_creditor_id = -1
 	_pending_trade_offer.clear()
 	_rent_waiver_pacts.clear()
+	_secret_missions.clear()
+	_local_secret_mission.clear()
 	_auction_state.clear()
 	_pending_periodic_auction = false
 	_player_auctioned_this_turn = false
@@ -758,6 +839,12 @@ func start_match_from_setup(player_configs: Array[Dictionary]) -> void:
 		_sync_board_visuals()
 	if network != null and network.is_host():
 		network.broadcast_match_started(_active_net_session_id, _build_network_snapshot())
+		if _game_rules_mode == "dynamic":
+			for pm: Dictionary in players:
+				var p_peer_id: int = int(pm.get("peer_id", 1))
+				var pm_id: int = int(pm.get("id", -1))
+				if not bool(pm.get("is_bot", false)) and p_peer_id > 1 and _secret_missions.has(pm_id):
+					network.send_match_event_to_peer(p_peer_id, _active_net_session_id, "SECRET_MISSION", (_secret_missions[pm_id] as Dictionary).duplicate(true))
 	_sync_hud()
 	call_deferred("_maybe_start_bot_turn")
 
@@ -838,6 +925,8 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	mortgaged_tiles.clear()
 	_pending_trade_offer.clear()
 	_rent_waiver_pacts.clear()
+	_secret_missions.clear()
+	_local_secret_mission.clear()
 	_auction_state.clear()
 	_pending_periodic_auction = false
 	_player_auctioned_this_turn = false
@@ -864,6 +953,7 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	_reset_chance_deck()
 	if _game_rules_mode == "dynamic":
 		_apply_dynamic_initial_draft()
+		_assign_secret_missions()
 	var mode_badge_txt: String = "Estância Dinâmica" if _game_rules_mode == "dynamic" else "Clássico"
 	var team_badge_txt: String = " • Times %s" % _team_mode.replace("v", "x") if is_team_mode() else ""
 	_log_both("Partida (%s%s) iniciada com %d estanceiros! Saldo inicial: %d Pilas." % [mode_badge_txt, team_badge_txt, players.size(), start_money])
@@ -915,6 +1005,102 @@ func _apply_dynamic_initial_draft() -> void:
 				break
 		if not picked_names.is_empty():
 			_log_both("Draft Inicial: %s recebeu %s." % [str(p.get("name", "Estanceiro")), " e ".join(picked_names)])
+
+func _assign_secret_missions() -> void:
+	_secret_missions.clear()
+	_local_secret_mission.clear()
+	if _game_rules_mode != "dynamic" or players.is_empty():
+		return
+	var pool: Array[Dictionary] = []
+	for m_def: Dictionary in SECRET_MISSIONS:
+		pool.append(m_def.duplicate(true))
+	pool.shuffle()
+	for i: int in range(players.size()):
+		var pid: int = int(players[i].get("id", -1))
+		if pid < 0:
+			continue
+		var template: Dictionary = pool[i % pool.size()].duplicate(true)
+		template["completed"] = false
+		_secret_missions[pid] = template
+
+func get_secret_mission_for_player(player_id: int) -> Dictionary:
+	if _secret_missions.has(player_id):
+		return (_secret_missions[player_id] as Dictionary).duplicate(true)
+	return {}
+
+func get_local_secret_mission() -> Dictionary:
+	if _game_rules_mode != "dynamic" or not _match_active:
+		return {}
+	if _is_network_client():
+		return _local_secret_mission.duplicate(true)
+	var local_pid: int = _get_local_player_id() if _is_online_match() else -1
+	if local_pid < 0 and not players.is_empty():
+		var active_p: Dictionary = players[current_player_index] if (current_player_index >= 0 and current_player_index < players.size()) else players[0]
+		if not bool(active_p.get("is_bot", false)):
+			local_pid = int(active_p.get("id", -1))
+		else:
+			for p: Dictionary in players:
+				if not bool(p.get("is_bot", false)) and not bool(p.get("bankrupt", false)):
+					local_pid = int(p.get("id", -1))
+					break
+	if local_pid >= 0:
+		return get_secret_mission_for_player(local_pid)
+	return {}
+
+func _check_secret_mission_condition(player: Dictionary, mission_id: String) -> bool:
+	var pid: int = int(player.get("id", -1))
+	if pid < 0 or bool(player.get("bankrupt", false)):
+		return false
+	var owned_props: Array[int] = _get_actor_or_team_properties(pid)
+	match mission_id:
+		"CONSTRUCTOR":
+			var b_sum: int = 0
+			for tid: int in owned_props:
+				b_sum += property_buildings.get(tid, 0)
+			return b_sum >= 4
+		"MAGNATE":
+			return int(player.get("money", 0)) >= 4000
+		"BARON":
+			return owned_props.size() >= 6
+		"UTILITY_KING":
+			var comp_cnt: int = 0
+			for tid: int in owned_props:
+				if tid >= 0 and tid < tiles.size() and str(tiles[tid].get("type", "")) == "COMPANY":
+					comp_cnt += 1
+			return comp_cnt >= 2
+		"LANDLORD":
+			return _count_player_monopolies(pid) >= 1
+	return false
+
+func _evaluate_secret_missions() -> void:
+	if _game_rules_mode != "dynamic" or not _match_active or _is_network_client():
+		return
+	for p: Dictionary in players:
+		var pid: int = int(p.get("id", -1))
+		if pid < 0 or bool(p.get("bankrupt", false)) or not _secret_missions.has(pid):
+			continue
+		var m: Dictionary = _secret_missions[pid]
+		if bool(m.get("completed", false)):
+			continue
+		var mid: String = str(m.get("id", ""))
+		if _check_secret_mission_condition(p, mid):
+			m["completed"] = true
+			var reward: int = int(m.get("reward", SECRET_MISSION_REWARD))
+			_adjust_player_money(p, reward)
+			var m_title: String = str(m.get("title", "Missão Secreta"))
+			_log_both("Missão Secreta cumprida! %s concluiu '%s' e recebeu +%d Pilas!" % [str(p.get("name", "Estanceiro")), m_title, reward])
+			_play_sfx("victory")
+			if not bool(p.get("is_bot", false)):
+				var p_peer: int = int(p.get("peer_id", 1))
+				if _is_network_host() and p_peer > 1:
+					network.send_match_event_to_peer(p_peer, _active_net_session_id, "SECRET_MISSION", m.duplicate(true))
+					network.send_match_event_to_peer(p_peer, _active_net_session_id, "TOAST", {
+						"title": "Missão Cumprida!",
+						"detail": "%s: +%d Pilas creditados." % [m_title, reward],
+						"tone": "positive"
+					})
+				elif hud != null:
+					hud.show_event_toast("Missão Cumprida!", "%s: +%d Pilas creditados." % [m_title, reward], "positive")
 
 func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 	var tile: Dictionary = tiles[tile_idx]
@@ -1903,6 +2089,7 @@ func _sync_hud() -> void:
 	if hud == null:
 		return
 	hud.set_round_info(current_round, is_market_push_round(), get_current_season_info())
+	hud.set_secret_mission(get_local_secret_mission())
 	if board_view != null:
 		board_view.apply_season_visuals(get_current_season_id(), true)
 	var online_now: bool = _is_online_match()
@@ -2279,6 +2466,7 @@ func decline_buy_property() -> void:
 		_last_tile_summary = "%s recusou a compra." % str(player["name"])
 	_log_both(_last_tile_summary)
 	_finish_post_move_step(player)
+	_evaluate_secret_missions()
 	_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("warning")
@@ -2308,6 +2496,7 @@ func build_on_property(tile_idx: int) -> void:
 		board_view.update_buildings(property_buildings)
 		_broadcast_tile_pulse(tile_idx, Color("#FFD166"), "HOTEL!" if current_lvl == 4 else "+1 CASA")
 	_play_sfx("build")
+	_evaluate_secret_missions()
 	_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("positive")
@@ -2463,6 +2652,7 @@ func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
 	var verb_txt: String = "investiu %d Pilas" % net_cost if net_cost >= 0 else "recebeu %d Pilas em demolições" % absi(net_cost)
 	_log_both("%s confirmou carrinho de obras (%d lotes atualizados, %s)." % [str(player["name"]), changes_count, verb_txt])
 	_check_post_liquidation_bankruptcy(player)
+	_evaluate_secret_missions()
 	if current_state != TurnState.GAME_OVER:
 		_sync_hud()
 	if hud != null:
@@ -3109,8 +3299,10 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 		if not candidate.is_empty() and not bool(candidate.get("bankrupt", false)):
 			creditor = candidate
 
-	var props_to_process: Array[int] = _get_actor_or_team_properties(target_pid) if is_team_mode() else []
-	if not is_team_mode():
+	var props_to_process: Array[int] = []
+	if is_team_mode():
+		props_to_process = _get_actor_or_team_properties(target_pid)
+	else:
 		for p_v: Variant in player.get("properties", []):
 			props_to_process.append(int(p_v))
 	if is_team_mode():
@@ -3239,6 +3431,21 @@ func _trigger_victory(winner_player: Dictionary, custom_summary: String = "", vi
 		if hud != null:
 			hud.show_victory_modal(victory_info)
 		match_finished.emit(victory_info.duplicate(true))
+		var human_won: bool = false
+		if not _is_network_client():
+			for pl_w: Dictionary in players:
+				var pl_wid: int = int(pl_w.get("id", -1))
+				if not bool(pl_w.get("is_bot", false)) and are_allied_players(pl_wid, w_id):
+					human_won = true
+					break
+		if human_won:
+			unlock_trophy("primeiro_galpao")
+			if int(victory_info.get("net_worth", 0)) >= 10000:
+				unlock_trophy("rei_da_soja")
+			if is_team_mode():
+				unlock_trophy("esquadrao_pampa")
+			if _game_rules_mode == "dynamic":
+				unlock_trophy("campeao_inverno")
 		_broadcast_state_if_host()
 
 func _count_player_monopolies(player_id: int) -> int:
@@ -3331,6 +3538,7 @@ func buy_current_property() -> void:
 		board_view.update_ownership(property_owners, mortgaged_tiles)
 		_broadcast_tile_pulse(pos, board_view.get_player_color(int(player["id"])), "COMPRADO! -P$ %d" % price)
 	_finish_post_move_step(player)
+	_evaluate_secret_missions()
 	_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("positive")
@@ -3666,6 +3874,9 @@ func _commit_trade_agreement(
 	var safe_waiver: int = clampi(rent_waiver_rounds, 0, DEFAULT_RENT_WAIVER_ROUNDS)
 	if safe_waiver > 0:
 		_register_rent_waiver_pact(sender_id, target_id, safe_waiver)
+		if (not bool(sender.get("is_bot", false))) or (not bool(target.get("is_bot", false))):
+			unlock_trophy("pacto_honra")
+	_evaluate_secret_missions()
 
 	var mono_suffix: String = " ★ Monopólio completo!" if completed_mono else ""
 	var pact_suffix: String = " 🤝 Parceria sem aluguel (%d rod.)!" % safe_waiver if safe_waiver > 0 else ""
@@ -3932,6 +4143,9 @@ func _finalize_auction() -> void:
 				w_props.append(tile_idx)
 			property_purchased.emit(winner_id, tile_idx, winning_bid)
 			_play_sfx("auction_win")
+			if not bool(winner.get("is_bot", false)):
+				unlock_trophy("arrematador")
+			_evaluate_secret_missions()
 			if seller_id >= 0:
 				_log_both("Martelo batido! %s comprou %s de %s em leilão por %d Pilas!" % [str(winner["name"]), tile_name, str(_get_player_by_id(seller_id).get("name", "Vendedor")), winning_bid])
 			else:
@@ -4364,6 +4578,10 @@ func _on_network_remote_event_received(session_id: int, event_type: String, payl
 		"TRADE_OFFER_CLOSED":
 			if hud != null:
 				hud.hide_trade_confirm_modal()
+		"SECRET_MISSION":
+			_local_secret_mission = payload.duplicate(true)
+			if hud != null:
+				hud.set_secret_mission(_local_secret_mission)
 		"RETURN_TO_LOBBY":
 			_reset_match_state()
 			if setup_screen != null:

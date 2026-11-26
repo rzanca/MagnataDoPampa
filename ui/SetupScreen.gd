@@ -3,6 +3,7 @@ extends CanvasLayer
 signal start_match_requested(player_configs: Array[Dictionary])
 signal help_requested
 signal settings_requested
+signal trophies_requested
 signal quit_game_requested
 signal host_room_requested(port: int, player_name: String)
 signal join_room_requested(address: String, port: int, player_name: String)
@@ -343,6 +344,24 @@ func _build_ui() -> void:
 	)
 	btn_help.pressed.connect(func() -> void: help_requested.emit())
 	left_nav.add_child(btn_help)
+
+	var btn_trophies: Button = Button.new()
+	btn_trophies.text = "Troféus"
+	btn_trophies.tooltip_text = "Conquistas e Troféus de Carreira no Magnata do Pampa"
+	_style_button(
+		btn_trophies,
+		"#242214",
+		"#38331B",
+		"#19170D",
+		"#D4AF37",
+		Color("#FFF2C6"),
+		roundi(13.5 * f_scale),
+		Vector2(104.0, ctrl_h),
+		10,
+		1
+	)
+	btn_trophies.pressed.connect(func() -> void: trophies_requested.emit())
+	left_nav.add_child(btn_trophies)
 
 	var title_vbox: VBoxContainer = VBoxContainer.new()
 	title_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
