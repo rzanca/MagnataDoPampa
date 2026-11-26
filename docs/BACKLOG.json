@@ -188,7 +188,7 @@
       "id": "LOTE-23",
       "title": "Integração final QA, auditoria estática e exportação v0.10.0",
       "owner_agent": "04_qa_devops.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Executar bateria completa headless desktop + mobile, validar zero erros e exportar Windows+Launcher e Android APK v0.10.0."
     }
   ]

@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
-    "version":  "0.9.0",
-    "build_number":  11,
+    "version":  "0.10.0",
+    "build_number":  12,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
-    "release_notes":  "Evolucao completa: moeda PILA (P$), Estacoes do Pampa, Estancia Dinamica, cartas sazonais, audio gaucho multi-harmonico, camera pan/zoom + popups arrastaveis, novo branding em 40 lotes/cartas e modelos 3D .glb do Blender.",
-    "built_at":  "2026-11-26T17:52:12Z",
-    "git_commit":  "8a4d2fe"
+    "release_notes":  "v0.10.0: Ambiente 3D Galpao/Pampa, Modo de Times FFA/2x2/3x3 (Maragatos vs Chimangos), Contratos de Parceria 3 rodadas, Missoes Secretas Dinamicas, Trofeus de Carreira e Trilha Ambiente Sazonal.",
+    "built_at":  "2026-11-26T18:36:50Z",
+    "git_commit":  "d3ea350"
 }
