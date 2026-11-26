@@ -51,7 +51,7 @@ static func make_button_style(
 	sb.content_margin_bottom = 4.0 if pressed_shift else 5.0
 	return sb
 
-static func format_brl(amount: int) -> String:
+static func format_pila(amount: int) -> String:
 	var sign_str: String = "-" if amount < 0 else ""
 	var digits: String = str(absi(amount))
 	var out: String = ""
@@ -61,4 +61,21 @@ static func format_brl(amount: int) -> String:
 			out = "." + out
 		out = digits.substr(idx, 1) + out
 		count += 1
-	return "%sR$ %s" % [sign_str, out]
+	return "%sP$ %s" % [sign_str, out]
+
+static func format_pilas_extenso(amount: int) -> String:
+	var sign_str: String = "-" if amount < 0 else ""
+	var abs_val: int = absi(amount)
+	var digits: String = str(abs_val)
+	var out: String = ""
+	var count: int = 0
+	for idx: int in range(digits.length() - 1, -1, -1):
+		if count > 0 and count % 3 == 0:
+			out = "." + out
+		out = digits.substr(idx, 1) + out
+		count += 1
+	var unit: String = "Pila" if abs_val == 1 else "Pilas"
+	return "%s%s %s" % [sign_str, out, unit]
+
+static func format_brl(amount: int) -> String:
+	return format_pila(amount)

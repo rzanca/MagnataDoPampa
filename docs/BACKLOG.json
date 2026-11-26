@@ -106,6 +106,48 @@
       "owner_agent": "00_product_manager.md",
       "status": "done",
       "notes": "Gerar brasão/ícone e banner próprios (assets/brand/), adicionar Fechar Jogo no SetupScreen e Pausa, remover Configurar Repo e barra fixa no Launcher, unir Windows+Launcher em zip único e remover .antigravity/addons do Git."
+    },
+    {
+      "id": "LOTE-12",
+      "title": "Moeda oficial PILA, Sistema de Estações do Pampa, Estância Dinâmica e Cartas Sazonais",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "done",
+      "notes": "Substituir R$ por P$ / Pilas em UIStyleTokens, dados, logs e HUD; implementar estações rotativas (Primavera/Verão/Outono/Inverno), Modo Estância Dinâmica (draft inicial, meta de patrimônio/rodadas) e 24 cartas sazonais."
+    },
+    {
+      "id": "LOTE-13",
+      "title": "Áudio Temático Gaúcho multi-harmônico em SoundManager.gd",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "in_progress",
+      "notes": "Substituir tons simples por acordes de acordeon/fandango, violão dedilhado, trote de casco, dados na madeira, moedas de Pilas e alertas sazonais."
+    },
+    {
+      "id": "LOTE-14",
+      "title": "Câmera Pan + Zoom, foco bem próximo no peão e Popups Arrastáveis",
+      "owner_agent": "03_engenheiro_ui_hibrida.md",
+      "status": "pending",
+      "notes": "Adicionar pan e zoom na câmera 3D/2D em Board3D.gd, zoom aproximado durante salto do peão e cabeçalho arrastável com clamp nos modais de GameHUD.gd."
+    },
+    {
+      "id": "LOTE-15",
+      "title": "Branding no centro do tabuleiro, 40 artes dos lotes e fundo da carta Sorte ou Azar",
+      "owner_agent": "03_engenheiro_ui_hibrida.md",
+      "status": "pending",
+      "notes": "Gerar fundo temático de carta, renovar centro do tabuleiro 3D com brasão oficial e atualizar as 40 ilustrações dos lotes em tools/generate_tile_art.gd."
+    },
+    {
+      "id": "LOTE-16",
+      "title": "Assets 3D autorais (.glb) via Blender 5.3 headless (peões, construções, dados e enfeites)",
+      "owner_agent": "01_arquiteto_hibrido.md",
+      "status": "pending",
+      "notes": "Gerar modelos modulares .glb via Blender headless em assets/models/ e integrar no Board3D.gd com fallback seguro."
+    },
+    {
+      "id": "LOTE-17",
+      "title": "Polimento final, bateria completa de testes e exportação v0.9.0",
+      "owner_agent": "04_qa_devops.md",
+      "status": "pending",
+      "notes": "Validar todos os scripts, mobile smoke, auditoria estática, incrementar versão e gerar pacote final Windows+Launcher e Android APK."
     }
   ]
 }

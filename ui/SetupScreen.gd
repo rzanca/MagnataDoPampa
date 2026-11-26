@@ -11,6 +11,7 @@ signal join_web_room_requested(signaling_url: String, room_code: String, player_
 signal disconnect_network_requested
 signal lobby_config_changed
 signal lobby_slot_pref_requested(pawn_idx: int, color_idx: int, player_name: String)
+signal rules_mode_changed(mode_id: String)
 
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
@@ -112,6 +113,9 @@ var _web_status_label: Label
 
 var _btn_start: Button
 var _btn_quit: Button
+var _btn_rules_dynamic: Button
+var _btn_rules_classic: Button
+var _rules_mode: String = "dynamic"
 var _summary_pill_label: Label
 var _quick_buttons: Array[Button] = []
 var _brand_emblem_tex: Texture2D = null
@@ -340,7 +344,7 @@ func _build_ui() -> void:
 	crest_row.add_child(title_lbl)
 
 	var subtitle_lbl: Label = Label.new()
-	subtitle_lbl.text = "MODO CLÁSSICO  •  RIO GRANDE DO SUL  •  R$ 2.558 INICIAIS"
+	subtitle_lbl.text = "RIO GRANDE DO SUL  •  P$ 2.558 INICIAIS (PILA)"
 	subtitle_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	subtitle_lbl.add_theme_font_size_override("font_size", roundi(12.5 * f_scale))
 	subtitle_lbl.add_theme_color_override("font_color", Color("#A7C2B2"))
@@ -407,6 +411,24 @@ func _build_ui() -> void:
 	_btn_mode_web.text = "Multiplayer Web (WebRTC)"
 	_btn_mode_web.pressed.connect(func() -> void: _set_mode_tab(MODE_TAB_WEBRTC))
 	mode_row.add_child(_btn_mode_web)
+
+	var mode_sep: Label = Label.new()
+	mode_sep.text = "|"
+	mode_sep.add_theme_color_override("font_color", Color("#3C5949"))
+	mode_row.add_child(mode_sep)
+
+	_btn_rules_dynamic = Button.new()
+	_btn_rules_dynamic.text = "Estância Dinâmica"
+	_btn_rules_dynamic.tooltip_text = "Estações do Pampa, draft inicial de 2 escrituras e meta ágil (30 rodadas ou 3 monopólios)."
+	_btn_rules_dynamic.pressed.connect(func() -> void: _set_rules_mode("dynamic"))
+	mode_row.add_child(_btn_rules_dynamic)
+
+	_btn_rules_classic = Button.new()
+	_btn_rules_classic.text = "Clássico Tradicional"
+	_btn_rules_classic.tooltip_text = "Regras tradicionais completas sem draft inicial nem limite de rodadas."
+	_btn_rules_classic.pressed.connect(func() -> void: _set_rules_mode("classic"))
+	mode_row.add_child(_btn_rules_classic)
+	_refresh_rules_mode_buttons()
 
 	# --- Painel de Conexão P2P LAN (ENet: Hospedar / Entrar por IP e Porta) ---
 	_p2p_panel = PanelContainer.new()
@@ -978,7 +1000,9 @@ func _refresh_table_summary() -> void:
 	var mode_txt: String = "Local"
 	if _net_mode != 0:
 		mode_txt = "Web (WebRTC)" if _net_transport == 2 else "P2P LAN (ENet)"
-	_summary_pill_label.text = "Mesa %s  •  %d Estanceiros (%d Humano%s, %d [BOT]%s)" % [
+	var rules_txt: String = "Estância Dinâmica (Estações)" if _rules_mode == "dynamic" else "Clássico Tradicional"
+	_summary_pill_label.text = "%s  •  Mesa %s  •  %d Estanceiros (%d Humano%s, %d [BOT]%s)" % [
+		rules_txt,
 		mode_txt,
 		_player_count,
 		humans,
@@ -986,6 +1010,33 @@ func _refresh_table_summary() -> void:
 		bots,
 		"s" if bots != 1 else ""
 	]
+
+func get_rules_mode() -> String:
+	return _rules_mode
+
+func set_rules_mode(mode_id: String, should_emit: bool = false) -> void:
+	_rules_mode = "classic" if mode_id == "classic" else "dynamic"
+	_refresh_rules_mode_buttons()
+	_refresh_table_summary()
+	if should_emit:
+		rules_mode_changed.emit(_rules_mode)
+
+func _set_rules_mode(mode_id: String) -> void:
+	set_rules_mode(mode_id, true)
+
+func _refresh_rules_mode_buttons() -> void:
+	if _btn_rules_dynamic == null or _btn_rules_classic == null:
+		return
+	var f_scale: float = 1.18 if _is_touch_mode else 1.0
+	var b_h: float = 40.0 if _is_touch_mode else 34.0
+	var b_fs: int = roundi(12.5 * f_scale)
+	var dyn_active: bool = (_rules_mode == "dynamic")
+	if dyn_active:
+		_style_button(_btn_rules_dynamic, "#24543B", "#2F6E4D", "#1A3D2B", "#F5D06F", Color("#FFF8D6"), b_fs, Vector2(166.0, b_h), 9, 2)
+		_style_button(_btn_rules_classic, "#14211A", "#1E3228", "#0F1813", "#364F41", Color("#9FB8AA"), b_fs, Vector2(158.0, b_h), 9, 1)
+	else:
+		_style_button(_btn_rules_dynamic, "#14211A", "#1E3228", "#0F1813", "#364F41", Color("#9FB8AA"), b_fs, Vector2(166.0, b_h), 9, 1)
+		_style_button(_btn_rules_classic, "#24543B", "#2F6E4D", "#1A3D2B", "#F5D06F", Color("#FFF8D6"), b_fs, Vector2(158.0, b_h), 9, 2)
 
 func _refresh_slot_type_button(slot_idx: int) -> void:
 	var f_scale: float = 1.18 if _is_touch_mode else 1.0

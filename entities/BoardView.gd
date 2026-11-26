@@ -178,10 +178,10 @@ func _create_tile_visual(tile_idx: int, pos: Vector2, size: Vector2, tile_data: 
 		val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		val_lbl.add_theme_font_size_override("font_size", 7)
 		if t_type == "TAX":
-			val_lbl.text = "-R$%d" % int(tile_data.get("amount", 0))
+			val_lbl.text = "-P$%d" % int(tile_data.get("amount", 0))
 			val_lbl.add_theme_color_override("font_color", Color("#9B1B1B"))
 		else:
-			val_lbl.text = "R$%d" % int(tile_data.get("price", 0))
+			val_lbl.text = "P$%d" % int(tile_data.get("price", 0))
 			val_lbl.add_theme_color_override("font_color", Color("#7C5800"))
 		val_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		container.add_child(val_lbl)
@@ -228,7 +228,7 @@ func _refresh_tile_value_labels() -> void:
 		if t_type == "TAX":
 			continue
 		if not _owners_cache.has(tile_idx):
-			lbl.text = "R$%d" % int(t.get("price", 0))
+			lbl.text = "P$%d" % int(t.get("price", 0))
 			lbl.add_theme_color_override("font_color", Color("#7C5800"))
 		elif _mortgaged_cache.get(tile_idx, false):
 			lbl.text = "HIPOT"
@@ -243,7 +243,7 @@ func _refresh_tile_value_labels() -> void:
 			var rent_val: int = int(rents[lvl]) if not rents.is_empty() else 0
 			if lvl == 0 and _has_monopoly_in_cache(owner_id, str(t.get("group", ""))):
 				rent_val *= 2
-			lbl.text = "Al.R$%d" % rent_val
+			lbl.text = "Al.P$%d" % rent_val
 			lbl.add_theme_color_override("font_color", Color("#14532D"))
 
 func _has_monopoly_in_cache(owner_id: int, group_name: String) -> bool:

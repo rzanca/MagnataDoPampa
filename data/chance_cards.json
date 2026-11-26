@@ -4,37 +4,37 @@
 	  "id": 1,
 	  "type": "GAIN_MONEY",
 	  "amount": 200,
-	  "text": "Tchê, acertou na mosca! Vendeu um lote de erva-mate de primeira e embolsou R$ 200."
+	  "text": "Tchê, acertou na mosca! Vendeu um lote de erva-mate de primeira e embolsou 200 Pilas."
 	},
 	{
 	  "id": 2,
 	  "type": "GAIN_MONEY",
 	  "amount": 150,
-	  "text": "Bah, que barbaridade de sorte! Ganhou no bolão do churrasco dominical: +R$ 150."
+	  "text": "Bah, que barbaridade de sorte! Ganhou no bolão do churrasco dominical: +150 Pilas."
 	},
 	{
 	  "id": 3,
 	  "type": "GAIN_MONEY",
 	  "amount": 100,
-	  "text": "Ficou em destaque na festa da colônia e recebeu R$ 100 de bonificação."
+	  "text": "Ficou em destaque na festa da colônia e recebeu 100 Pilas de bonificação."
 	},
 	{
 	  "id": 4,
 	  "type": "PAY_MONEY",
 	  "amount": 100,
-	  "text": "Atolou o carro na estrada de chão após a chuva! Pagou R$ 100 de guincho."
+	  "text": "Atolou a caminhonete na estrada de chão após a chuva! Pagou 100 Pilas de guincho."
 	},
 	{
 	  "id": 5,
 	  "type": "PAY_MONEY",
 	  "amount": 150,
-	  "text": "A chaleira estourou bem na hora do mate e molhou o galpão! Prejuízo de R$ 150."
+	  "text": "A chaleira estourou bem na hora do mate e molhou o galpão! Prejuízo de 150 Pilas."
 	},
 	{
 	  "id": 6,
 	  "type": "PAY_MONEY",
 	  "amount": 50,
-	  "text": "Caprichou demais no carreteiro e sobrou conta no armazém: pague R$ 50."
+	  "text": "Caprichou demais no carreteiro e sobrou conta no armazém: pague 50 Pilas."
 	},
 	{
 	  "id": 7,
@@ -73,26 +73,90 @@
 	  "type": "REPAIR_BUILDINGS",
 	  "house_cost": 25,
 	  "hotel_cost": 100,
-	  "text": "Temporal de inverno derrubou telhas no pampa! Pague R$ 25 por cada casa e R$ 100 por cada hotel."
+	  "text": "Temporal de inverno derrubou telhas no pampa! Pague 25 Pilas por cada casa e 100 Pilas por cada estância."
 	},
 	{
 	  "id": 14,
 	  "type": "REPAIR_BUILDINGS",
 	  "house_cost": 40,
 	  "hotel_cost": 115,
-	  "text": "Vistoria de reforma nos galpões e estâncias! Pague R$ 40 por casa e R$ 115 por hotel."
+	  "text": "Vistoria de reforma nos galpões e estâncias! Pague 40 Pilas por casa e 115 Pilas por estância."
 	},
 	{
 	  "id": 15,
 	  "type": "COLLECT_FROM_ALL",
 	  "amount": 50,
-	  "text": "É dia do seu aniversário no CTG! Cada jogador ativo lhe presenteia com R$ 50."
+	  "text": "É dia do seu aniversário no CTG! Cada jogador ativo lhe presenteia com 50 Pilas."
 	},
 	{
 	  "id": 16,
 	  "type": "PAY_ALL",
 	  "amount": 50,
-	  "text": "Você assumiu a presidência do fandango e bancou a rodada! Pague R$ 50 a cada jogador ativo."
+	  "text": "Você assumiu a presidência do fandango e bancou a rodada! Pague 50 Pilas a cada jogador ativo."
+	},
+	{
+	  "id": 17,
+	  "type": "SEASONAL_PAY",
+	  "season_match": "INVERNO",
+	  "amount": 75,
+	  "season_amount": 150,
+	  "text": "Geada negra na madrugada! Reforço de ração para o gado custa 75 Pilas (ou 150 Pilas se for Inverno)."
+	},
+	{
+	  "id": 18,
+	  "type": "SEASONAL_PAY",
+	  "season_match": "VERAO",
+	  "amount": 70,
+	  "season_amount": 140,
+	  "text": "Estiagem severa secou os açudes da coxilha! Carro-pipa e irrigação custam 70 Pilas (ou 140 Pilas no Verão)."
+	},
+	{
+	  "id": 19,
+	  "type": "SEASONAL_PAY",
+	  "season_match": "OUTONO",
+	  "amount": 60,
+	  "season_amount": 125,
+	  "text": "Chuva torrencial transbordou o arroio na estrada! Desvio de carga custa 60 Pilas (ou 125 Pilas no Outono)."
+	},
+	{
+	  "id": 20,
+	  "type": "SEASONAL_PAY",
+	  "season_match": "PRIMAVERA",
+	  "amount": 65,
+	  "season_amount": 130,
+	  "text": "Nuvem de gafanhotos e vendaval na brotação! Controle agrícola custa 65 Pilas (ou 130 Pilas na Primavera)."
+	},
+	{
+	  "id": 21,
+	  "type": "SEASONAL_GAIN",
+	  "season_match": "VERAO",
+	  "amount": 110,
+	  "season_amount": 210,
+	  "text": "Safra recorde de soja e milho nos campos! Venda rende 110 Pilas (ou 210 Pilas durante o Verão)."
+	},
+	{
+	  "id": 22,
+	  "type": "SEASONAL_GAIN",
+	  "season_match": "OUTONO",
+	  "amount": 100,
+	  "season_amount": 190,
+	  "text": "Vindima premiada na Serra Gaúcha! Lote especial de vinhos rende 100 Pilas (ou 190 Pilas no Outono)."
+	},
+	{
+	  "id": 23,
+	  "type": "SEASONAL_GAIN",
+	  "season_match": "PRIMAVERA",
+	  "amount": 95,
+	  "season_amount": 185,
+	  "text": "Leilão de terneiros de primavera superou as expectativas! Receba 95 Pilas (ou 185 Pilas na Primavera)."
+	},
+	{
+	  "id": 24,
+	  "type": "SEASONAL_GAIN",
+	  "season_match": "INVERNO",
+	  "amount": 90,
+	  "season_amount": 180,
+	  "text": "Festival de Sopas, Pinhão e Lareira lotou as estâncias! Lucre 90 Pilas (ou 180 Pilas no Inverno)."
 	}
   ]
 }

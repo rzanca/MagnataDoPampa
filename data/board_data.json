@@ -1,6 +1,7 @@
 {
   "config": {
-	"currency": "R$",
+	"currency": "P$",
+	"currency_name": "Pilas",
 	"starting_money": 2558,
 	"pass_go_bonus": 200,
 	"max_houses_bank": 32,

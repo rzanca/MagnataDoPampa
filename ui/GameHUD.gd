@@ -861,7 +861,7 @@ func _build_hero_zone(parent: VBoxContainer) -> void:
 	name_cash_row.add_child(_hero_name_label)
 
 	_hero_money_label = Label.new()
-	_hero_money_label.text = "R$ 2.558"
+	_hero_money_label.text = "P$ 2.558"
 	_hero_money_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_hero_money_label.size_flags_horizontal = Control.SIZE_SHRINK_END
 	if _bold_font != null:
@@ -1117,7 +1117,7 @@ func _build_action_dock_zone(parent: VBoxContainer) -> void:
 	var jail_fs: int = _fs(12.0)
 
 	_btn_bail = Button.new()
-	_btn_bail.text = "Fiança R$50"
+	_btn_bail.text = "Fiança P$50"
 	_btn_bail.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(_btn_bail, "#4D371F", "#6B4D2B", "#382716", "#E9C46A", Color("#FFF3D1"), false, jail_h, jail_fs, 8.0, true)
 	_btn_bail.pressed.connect(func() -> void: bail_pressed.emit())
@@ -1592,7 +1592,7 @@ func show_deed_modal(info: Dictionary) -> void:
 			"GO_TO_JAIL":
 				desc_lbl.text = "Vá direto para o Xadrez sem passar pelo Galpão Central e sem receber o bônus da partida."
 			"FREE_PARKING":
-				desc_lbl.text = "Feriadão de 20 de Setembro: Festa Farroupilha! Convoca imediatamente um Leilão Farroupilha de lote livre ou promove o Rateio de Chimarrão no Galpão (+R$ 20 de cada adversário solvente)."
+				desc_lbl.text = "Feriadão de 20 de Setembro: Festa Farroupilha! Convoca imediatamente um Leilão Farroupilha de lote livre ou promove o Rateio de Chimarrão no Galpão (+P$ 20 de cada adversário solvente)."
 			_:
 				desc_lbl.text = "Casa #%d do tabuleiro." % int(tile.get("index", 0))
 		_deed_body_box.add_child(desc_lbl)
@@ -1764,7 +1764,7 @@ func _build_trade_modal() -> void:
 	cash_box.add_child(cash_vbox)
 
 	_trade_cash_label = Label.new()
-	_trade_cash_label.text = "Dinheiro na troca: R$ 0"
+	_trade_cash_label.text = "Dinheiro na troca: P$ 0"
 	_trade_cash_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if _bold_font != null:
 		_trade_cash_label.add_theme_font_override("font", _bold_font)
@@ -2002,7 +2002,7 @@ func _refresh_trade_summary() -> void:
 		_trade_cash_label.text = "Você pede %s em dinheiro" % _format_brl(absi(_trade_cash_value))
 		_trade_cash_label.add_theme_color_override("font_color", Color("#7BF1A8"))
 	else:
-		_trade_cash_label.text = "Sem dinheiro envolvido (R$ 0)"
+		_trade_cash_label.text = "Sem dinheiro envolvido (P$ 0)"
 		_trade_cash_label.add_theme_color_override("font_color", Color("#B8C9BF"))
 
 	var offer_idx: int = int(_trade_offer_select.get_selected_metadata()) if _trade_offer_select.selected >= 0 else -1
@@ -2262,21 +2262,21 @@ func _build_auction_modal() -> void:
 	bid_row.add_child(_auction_btn_min)
 
 	_auction_btn_20 = Button.new()
-	_auction_btn_20.text = "+R$ 20"
+	_auction_btn_20.text = "+P$ 20"
 	_auction_btn_20.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(_auction_btn_20, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
 	_auction_btn_20.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 20))
 	bid_row.add_child(_auction_btn_20)
 
 	_auction_btn_50 = Button.new()
-	_auction_btn_50.text = "+R$ 50"
+	_auction_btn_50.text = "+P$ 50"
 	_auction_btn_50.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(_auction_btn_50, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
 	_auction_btn_50.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 50))
 	bid_row.add_child(_auction_btn_50)
 
 	_auction_btn_100 = Button.new()
-	_auction_btn_100.text = "+R$ 100"
+	_auction_btn_100.text = "+P$ 100"
 	_auction_btn_100.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(_auction_btn_100, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
 	_auction_btn_100.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 100))
@@ -2545,7 +2545,8 @@ func _build_help_modal() -> void:
 	var cam_hint: String = "Use o botão 'Vista 3D / Vista 2D' no canto superior esquerdo do tabuleiro." if _is_touch_mode else "Alterne entre Vista Isométrica 3D e Conferência 2D pelo botão superior ou tecla [Tab]."
 
 	var rules_items: Array[Array] = [
-		["Economia Base", "Cada estanceiro começa com R$ 2.558. O Banco possui 32 casas e 12 hotéis."],
+		["Economia Base (PILA)", "Cada estanceiro começa com P$ 2.558 (2.558 Pilas). O Banco possui 32 casas e 12 estâncias/hotéis."],
+		["Estações do Pampa", "No modo Estância Dinâmica, o clima alterna entre Primavera (+25% Galpão), Verão (+25% safra), Outono (-20% obras) e Inverno (+25% taxas)."],
 		["Monopólio & Construções", "Possuir todo o grupo de cor dobra o aluguel base e libera construções equilibradas (venda devolve 50%)."],
 		["Companhias & Hipoteca", "Companhias cobram (soma dos dados × fator). Desipotecar custa o valor da hipoteca +10%."],
 		["Inspecionar Casas", inspect_hint],
@@ -3713,7 +3714,7 @@ func _build_portfolio_modal() -> void:
 	hdr_info.add_child(_portfolio_meta_label)
 
 	_portfolio_money_label = Label.new()
-	_portfolio_money_label.text = "R$ 0"
+	_portfolio_money_label.text = "P$ 0"
 	_portfolio_money_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	if _bold_font != null:
 		_portfolio_money_label.add_theme_font_override("font", _bold_font)
@@ -4457,7 +4458,7 @@ func _rebuild_construction_cart_ui() -> void:
 		_cart_confirm_btn.text = "Ajustar Carrinho"
 		_cart_confirm_btn.disabled = true
 	else:
-		var cost_txt: String = ("Custo líquido: %s" % _format_brl(net_cost)) if net_cost > 0 else (("Reembolso líquido: +%s" % _format_brl(absi(net_cost))) if net_cost < 0 else "Troca neutra (R$ 0)")
+		var cost_txt: String = ("Custo líquido: %s" % _format_brl(net_cost)) if net_cost > 0 else (("Reembolso líquido: +%s" % _format_brl(absi(net_cost))) if net_cost < 0 else "Troca neutra (P$ 0)")
 		_cart_summary_label.text = "%s • Saldo projetado: %s" % [cost_txt, _format_brl(proj_money)]
 		_cart_summary_label.add_theme_color_override("font_color", Color("#A8FF78"))
 		_cart_confirm_btn.text = "Confirmar (%d lote%s)" % [changed_count, "" if changed_count == 1 else "s"]
@@ -4567,24 +4568,31 @@ func show_event_toast(title: String, detail: String, tone: String = "positive") 
 			_toast_panel.visible = false
 	)
 
-func set_round_info(round_num: int, is_market_cycle: bool) -> void:
+func set_round_info(round_num: int, is_market_cycle: bool, season_info: Dictionary = {}) -> void:
 	if _round_label == null or _round_badge_style == null:
 		return
 	var safe_round: int = maxi(1, round_num)
+	var season_short: String = str(season_info.get("short_label", "")).strip_edges()
+	var season_label: String = str(season_info.get("label", "")).strip_edges()
+	var season_effect: String = str(season_info.get("effect_desc", "")).strip_edges()
+	var season_col: String = str(season_info.get("color_hex", "#3B5949"))
+	var suffix: String = " • %s" % season_short if season_short != "" else ""
 	if is_market_cycle:
-		_round_label.text = "ROD. %d ★" % safe_round
+		_round_label.text = "ROD. %d%s ★" % [safe_round, suffix]
 		_round_badge_style.bg_color = Color("#342A12")
 		_round_badge_style.border_color = Color("#F5CA5C")
 		_round_label.add_theme_color_override("font_color", Color("#FFF3C4"))
 		if _round_badge != null:
-			_round_badge.tooltip_text = "Rodada %d • Feira de Negócios: maior estímulo a trocas e construções" % safe_round
+			var s_tip: String = "\nEstação (%s): %s" % [season_label, season_effect] if season_label != "" else ""
+			_round_badge.tooltip_text = ("Rodada %d • Feira de Negócios: maior estímulo a trocas e obras." % safe_round) + s_tip
 	else:
-		_round_label.text = "ROD. %d" % safe_round
+		_round_label.text = "ROD. %d%s" % [safe_round, suffix]
 		_round_badge_style.bg_color = Color("#182820")
-		_round_badge_style.border_color = Color("#3B5949")
+		_round_badge_style.border_color = Color(season_col if season_col != "" else "#3B5949")
 		_round_label.add_theme_color_override("font_color", Color("#D8ECE0"))
 		if _round_badge != null:
-			_round_badge.tooltip_text = "Rodada %d (avança quando todos os jogadores ativos completam sua vez)" % safe_round
+			var s_tip2: String = "\nEstação (%s): %s" % [season_label, season_effect] if season_label != "" else ""
+			_round_badge.tooltip_text = ("Rodada %d (avança quando todos os jogadores ativos completam sua vez)" % safe_round) + s_tip2
 
 func set_camera_mode_label(is_2d: bool) -> void:
 	_cached_is_2d_cam = is_2d
@@ -4756,7 +4764,7 @@ func refresh_hud(
 		_hero_pawn_name_label.add_theme_color_override("font_color", Color("#F8D568") if active_in_jail else Color("#BDD3C6"))
 	else:
 		_hero_name_label.text = "-"
-		_hero_money_label.text = "R$ 0"
+		_hero_money_label.text = "P$ 0"
 		_hero_phase_label.text = state_name.to_upper()
 		_hero_pawn_name_label.text = ""
 

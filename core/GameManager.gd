@@ -22,6 +22,11 @@ const SoundManagerClass = preload("res://core/SoundManager.gd")
 const BOT_ACTION_DELAY: float = 0.45
 const BOT_MAX_ACTIONS_PER_TURN: int = 32
 const TRADE_CYCLE_INTERVAL: int = 3
+const SEASON_CYCLE_ROUNDS: int = 3
+const DYNAMIC_ROUND_LIMIT: int = 30
+const DYNAMIC_NET_WORTH_GOAL: int = 12000
+const DYNAMIC_MONOPOLY_GOAL: int = 3
+const SEASON_ORDER: Array[String] = ["PRIMAVERA", "VERAO", "OUTONO", "INVERNO"]
 const PREFS_FILE_PATH: String = "user://preferences.cfg"
 const CHANCE_AUTO_DURATIONS: Dictionary[String, float] = {
 	"short": 2.5,
@@ -59,6 +64,11 @@ var doubles_count: int = 0
 var current_round: int = 1
 var _acted_in_current_round: Dictionary[int, bool] = {}
 var _bot_traded_this_turn: bool = false
+var _game_rules_mode: String = "classic"
+var _seasons_enabled: bool = false
+var _current_season_index: int = 0
+var _round_limit: int = 0
+var _net_worth_goal: int = 0
 
 var board_view: Board3DClass = null
 var hud: GameHUDClass = null
@@ -334,6 +344,8 @@ func _setup_visuals() -> void:
 	setup_screen.disconnect_network_requested.connect(_on_disconnect_network_requested)
 	setup_screen.lobby_config_changed.connect(_on_lobby_config_changed)
 	setup_screen.lobby_slot_pref_requested.connect(_on_setup_lobby_pref_requested)
+	setup_screen.rules_mode_changed.connect(set_rules_mode)
+	set_rules_mode(setup_screen.get_rules_mode())
 
 func _on_board_layout_updated(board_rect: Rect2) -> void:
 	if board_view != null:
@@ -530,9 +542,66 @@ func _on_restart_match_requested() -> void:
 		return
 	start_match_from_setup(_last_player_configs)
 
+func set_rules_mode(mode_id: String) -> void:
+	_game_rules_mode = "dynamic" if mode_id == "dynamic" else "classic"
+	if _game_rules_mode == "dynamic":
+		_seasons_enabled = true
+		_round_limit = DYNAMIC_ROUND_LIMIT
+		_net_worth_goal = DYNAMIC_NET_WORTH_GOAL
+	else:
+		_seasons_enabled = false
+		_round_limit = 0
+		_net_worth_goal = 0
+	if setup_screen != null and setup_screen.get_rules_mode() != _game_rules_mode:
+		setup_screen.set_rules_mode(_game_rules_mode, false)
+
+func get_current_season_id() -> String:
+	if not _seasons_enabled:
+		return ""
+	return SEASON_ORDER[clampi(_current_season_index, 0, SEASON_ORDER.size() - 1)]
+
+func get_current_season_info() -> Dictionary:
+	if not _seasons_enabled:
+		return {}
+	match get_current_season_id():
+		"PRIMAVERA":
+			return {
+				"id": "PRIMAVERA",
+				"label": "Primavera",
+				"short_label": "PRIM.",
+				"effect_desc": "Brote no Pampa: +25% no Galpão Central e +20% em Companhias/lotes iniciais.",
+				"color_hex": "#52B788"
+			}
+		"VERAO":
+			return {
+				"id": "VERAO",
+				"label": "Verão",
+				"short_label": "VERÃO",
+				"effect_desc": "Safra & Fandango: +25% em aluguéis dos grupos Laranja, Vermelho e Amarelo.",
+				"color_hex": "#F5CA5C"
+			}
+		"OUTONO":
+			return {
+				"id": "OUTONO",
+				"label": "Outono",
+				"short_label": "OUTON.",
+				"effect_desc": "Vindima & Obras: -20% no custo para construir casas e estâncias.",
+				"color_hex": "#F3722C"
+			}
+		_:
+			return {
+				"id": "INVERNO",
+				"label": "Inverno",
+				"short_label": "INVER.",
+				"effect_desc": "Geada & Minuano: Impostos +25%; lotes sem obra rendem -10%.",
+				"color_hex": "#4EA8DE"
+			}
+
 func start_match_from_setup(player_configs: Array[Dictionary]) -> void:
 	if network != null and network.is_client():
 		return
+	if setup_screen != null and setup_screen.visible:
+		set_rules_mode(setup_screen.get_rules_mode())
 	var saved_configs: Array[Dictionary] = []
 	for cfg: Dictionary in player_configs:
 		saved_configs.append(cfg.duplicate(true))
@@ -624,6 +693,7 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	current_state = TurnState.WAITING_ROLL
 	doubles_count = 0
 	current_round = 1
+	_current_season_index = 0
 	_acted_in_current_round.clear()
 	_bot_traded_this_turn = false
 	_selected_property_tile = -1
@@ -638,10 +708,58 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	_last_tile_summary = "Ponto de Partida — Galpão Central"
 
 	_reset_chance_deck()
-	_log_both("Partida iniciada com %d estanceiros! Saldo inicial: R$ %d." % [players.size(), start_money])
+	if _game_rules_mode == "dynamic":
+		_apply_dynamic_initial_draft()
+	var mode_badge_txt: String = "Estância Dinâmica" if _game_rules_mode == "dynamic" else "Clássico"
+	_log_both("Partida (%s) iniciada com %d estanceiros! Saldo inicial: %d Pilas." % [mode_badge_txt, players.size(), start_money])
+	if _seasons_enabled:
+		var s_info: Dictionary = get_current_season_info()
+		_log_both("Estação inicial: %s — %s" % [str(s_info.get("label", "")), str(s_info.get("effect_desc", ""))])
 	_log_both("=== Rodada 1 iniciada ===")
 	if not players.is_empty():
 		_log_both("Vez de %s, tchê!" % str(players[0]["name"]))
+
+func _would_complete_monopoly(player_id: int, tile_idx: int) -> bool:
+	if tile_idx < 0 or tile_idx >= tiles.size():
+		return false
+	var t: Dictionary = tiles[tile_idx]
+	if str(t.get("type", "")) != "PROPERTY":
+		return false
+	var g_name: String = str(t.get("group", ""))
+	if g_name == "":
+		return false
+	for g_tid: int in _get_group_tile_indices(g_name):
+		if g_tid != tile_idx and property_owners.get(g_tid, -1) != player_id:
+			return false
+	return true
+
+func _apply_dynamic_initial_draft() -> void:
+	var candidates: Array[int] = []
+	for i: int in range(tiles.size()):
+		var t: Dictionary = tiles[i]
+		var tt: String = str(t.get("type", ""))
+		if (tt == "PROPERTY" or tt == "COMPANY") and int(t.get("price", 999)) <= 200 and not property_owners.has(i):
+			candidates.append(i)
+	candidates.shuffle()
+	for p: Dictionary in players:
+		var pid: int = int(p.get("id", -1))
+		var p_props: Array = p.get("properties", [])
+		var picked_names: Array[String] = []
+		var picked_count: int = 0
+		for c_idx: int in range(candidates.size()):
+			var tid: int = candidates[c_idx]
+			if property_owners.has(tid):
+				continue
+			if _would_complete_monopoly(pid, tid):
+				continue
+			property_owners[tid] = pid
+			p_props.append(tid)
+			picked_names.append(str(tiles[tid].get("name", "Lote")))
+			picked_count += 1
+			if picked_count >= 2:
+				break
+		if not picked_names.is_empty():
+			_log_both("Draft Inicial: %s recebeu %s." % [str(p.get("name", "Estanceiro")), " e ".join(picked_names)])
 
 func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 	var tile: Dictionary = tiles[tile_idx]
@@ -698,25 +816,25 @@ func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 	var can_build: bool = is_owner_active and _can_build_on(active_pid, tile_idx)
 	var build_label: String = "+Casa"
 	if tile_type == "PROPERTY":
-		var h_cost: int = int(tile.get("house_cost", 50))
+		var h_cost: int = _get_effective_house_cost(tile)
 		var cur_lvl: int = property_buildings.get(tile_idx, 0)
-		build_label = "+Hotel (R$ %d)" % h_cost if cur_lvl == 4 else "+Casa (R$ %d)" % h_cost
+		build_label = "+Hotel (P$ %d)" % h_cost if cur_lvl == 4 else "+Casa (P$ %d)" % h_cost
 
 	var can_sell: bool = is_owner_active and _can_sell_building_on(active_pid, tile_idx)
 	var sell_label: String = "-Casa"
 	var cur_lvl_s: int = property_buildings.get(tile_idx, 0)
 	var refund_unit: int = _get_building_sell_value(tile)
 	if cur_lvl_s >= 5:
-		sell_label = "Vender Hotel (+R$ %d)" % refund_unit
+		sell_label = "Vender Hotel (+P$ %d)" % refund_unit
 	elif cur_lvl_s > 0:
-		sell_label = "Vender Casa (+R$ %d)" % refund_unit
+		sell_label = "Vender Casa (+P$ %d)" % refund_unit
 
 	var can_mortgage: bool = is_owner_active and _can_toggle_mortgage(active_pid, tile_idx)
 	var mortgage_label: String = "Hipotecar"
 	if mortgaged_tiles.get(tile_idx, false):
-		mortgage_label = "Desipotecar (-R$ %d)" % _get_redeem_cost(tile)
+		mortgage_label = "Desipotecar (-P$ %d)" % _get_redeem_cost(tile)
 	elif tile_type == "PROPERTY" or tile_type == "COMPANY":
-		mortgage_label = "Hipotecar (+R$ %d)" % _get_mortgage_value(tile)
+		mortgage_label = "Hipotecar (+P$ %d)" % _get_mortgage_value(tile)
 
 	return {
 		"tile_index": tile_idx,
@@ -810,22 +928,22 @@ func _build_portfolio_inspection_info(player_id: int) -> Dictionary:
 			rent_text = "Sem aluguel (hipotecada)"
 		elif tile_type == "COMPANY":
 			var mult: int = int(tile.get("multiplier", 50))
-			rent_text = "Aluguel: dados × R$ %d" % mult
+			rent_text = "Aluguel: dados × P$ %d" % mult
 		elif tile_type == "PROPERTY":
 			var rents: Array = tile.get("rent", [0])
 			var safe_lvl: int = clampi(b_lvl, 0, maxi(0, rents.size() - 1))
 			var rent_val: int = int(rents[safe_lvl]) if not rents.is_empty() else 0
 			if b_lvl == 0 and has_mono:
 				rent_val *= 2
-			rent_text = "Aluguel atual: R$ %d" % rent_val
+			rent_text = "Aluguel atual: P$ %d" % rent_val
 
 		var m_val: int = _get_mortgage_value(tile)
 		var r_cost: int = _get_redeem_cost(tile)
 		var sell_val: int = _get_building_sell_value(tile)
 		var can_mort: bool = can_manage_owner and _can_toggle_mortgage(player_id, tid)
 		var can_sell: bool = can_manage_owner and _can_sell_building_on(player_id, tid)
-		var mort_lbl: String = ("Desipotecar (-R$ %d)" % r_cost) if is_mort else ("Hipotecar (+R$ %d)" % m_val)
-		var sell_lbl: String = ("-Hotel (+R$ %d)" % sell_val) if b_lvl >= 5 else ("-Casa (+R$ %d)" % sell_val)
+		var mort_lbl: String = ("Desipotecar (-P$ %d)" % r_cost) if is_mort else ("Hipotecar (+P$ %d)" % m_val)
+		var sell_lbl: String = ("-Hotel (+P$ %d)" % sell_val) if b_lvl >= 5 else ("-Casa (+P$ %d)" % sell_val)
 
 		deeds_list.append({
 			"tile_index": tid,
@@ -1280,6 +1398,24 @@ func _get_building_sell_value(tile: Dictionary) -> int:
 	var house_cost: int = int(tile.get("house_cost", 50))
 	return floori(float(house_cost) * 0.5)
 
+func _get_effective_house_cost(tile: Dictionary) -> int:
+	var base_cost: int = int(tile.get("house_cost", 50))
+	if _seasons_enabled and get_current_season_id() == "OUTONO":
+		return maxi(20, roundi(float(base_cost) * 0.8))
+	return base_cost
+
+func _get_effective_pass_go_bonus() -> int:
+	var base_bonus: int = int(board_config.get("pass_go_bonus", 200))
+	if _seasons_enabled and get_current_season_id() == "PRIMAVERA":
+		return roundi(float(base_bonus) * 1.25)
+	return base_bonus
+
+func _get_effective_tax_amount(tile: Dictionary) -> int:
+	var base_tax: int = int(tile.get("amount", 0))
+	if _seasons_enabled and get_current_season_id() == "INVERNO":
+		return roundi(float(base_tax) * 1.25)
+	return base_tax
+
 func _get_current_player_money() -> int:
 	if players.is_empty() or current_player_index < 0 or current_player_index >= players.size():
 		return 0
@@ -1470,7 +1606,7 @@ func _can_build_on(player_id: int, tile_idx: int) -> bool:
 		if current_level > g_level:
 			return false
 
-	var house_cost: int = int(tile.get("house_cost", 50))
+	var house_cost: int = _get_effective_house_cost(tile)
 	return int(player["money"]) >= house_cost
 
 func _can_sell_building_on(player_id: int, tile_idx: int) -> bool:
@@ -1596,6 +1732,14 @@ func _advance_round_if_complete(finished_player_id: int) -> void:
 		return
 	current_round += 1
 	_acted_in_current_round.clear()
+	if _seasons_enabled:
+		var next_s: int = floori(float(current_round - 1) / float(SEASON_CYCLE_ROUNDS)) % SEASON_ORDER.size()
+		if next_s != _current_season_index:
+			_current_season_index = next_s
+			var s_info: Dictionary = get_current_season_info()
+			_play_sfx("festival")
+			_log_both("Mudança de Estação! Chegou %s: %s" % [str(s_info.get("label", "")), str(s_info.get("effect_desc", ""))])
+			_broadcast_toast_event("Estação: %s!" % str(s_info.get("label", "")), str(s_info.get("effect_desc", "")), "chance")
 	var auction_interval: int = int(_preferences.get("auction_interval_rounds", 3))
 	if not _applying_remote_state and not _is_network_client() and auction_interval > 0 and current_round >= auction_interval and current_round % auction_interval == 0:
 		if _count_unowned_buyables() > 0 and _count_active_players() >= 2:
@@ -1609,7 +1753,7 @@ func _advance_round_if_complete(finished_player_id: int) -> void:
 func _sync_hud() -> void:
 	if hud == null:
 		return
-	hud.set_round_info(current_round, is_market_push_round())
+	hud.set_round_info(current_round, is_market_push_round(), get_current_season_info())
 	var online_now: bool = _is_online_match()
 	var local_pid: int = _get_local_player_id()
 	var local_peer: int = network.get_local_peer_id() if online_now else 1
@@ -1627,7 +1771,7 @@ func _sync_hud() -> void:
 		tradable_map[owner_tid] = not _group_has_buildings(owner_tid)
 	hud.set_board_snapshot_meta(property_owners, property_buildings, mortgaged_tiles, tradable_map)
 
-	var default_bail_label: String = "Fiança R$%d" % int(board_config.get("bail_cost", 50))
+	var default_bail_label: String = "Fiança P$%d" % int(board_config.get("bail_cost", 50))
 	if players.is_empty() or not _match_active:
 		hud.refresh_hud(
 			players,
@@ -1675,7 +1819,7 @@ func _sync_hud() -> void:
 		var cur_tile: Dictionary = tiles[pos]
 		var cur_type: String = str(cur_tile.get("type", ""))
 		if (cur_type == "PROPERTY" or cur_type == "COMPANY") and not property_owners.has(pos):
-			buy_label = "Comprar R$%d" % int(cur_tile.get("price", 0))
+			buy_label = "Comprar P$%d" % int(cur_tile.get("price", 0))
 
 	var can_decline: bool = (not _is_animating and current_state == TurnState.EVALUATING and not is_bankrupt)
 	var can_bail: bool = _can_pay_bail()
@@ -1693,9 +1837,9 @@ func _sync_hud() -> void:
 	if _selected_property_tile >= 0 and _selected_property_tile < tiles.size():
 		var sel_tile: Dictionary = tiles[_selected_property_tile]
 		if str(sel_tile.get("type", "")) == "PROPERTY":
-			var sel_build_cost: int = int(sel_tile.get("house_cost", 50))
+			var sel_build_cost: int = _get_effective_house_cost(sel_tile)
 			var sel_cur_lvl: int = property_buildings.get(_selected_property_tile, 0)
-			build_label = "+Hotel R$%d" % sel_build_cost if sel_cur_lvl == 4 else "+Casa R$%d" % sel_build_cost
+			build_label = "+Hotel P$%d" % sel_build_cost if sel_cur_lvl == 4 else "+Casa P$%d" % sel_build_cost
 
 	var can_sell_building: bool = (_selected_property_tile >= 0) and _can_sell_building_on(pid, _selected_property_tile)
 	var sell_building_label: String = "-Casa"
@@ -1703,9 +1847,9 @@ func _sync_hud() -> void:
 		var sel_lvl: int = property_buildings.get(_selected_property_tile, 0)
 		var refund_unit: int = _get_building_sell_value(tiles[_selected_property_tile])
 		if sel_lvl >= 5:
-			sell_building_label = "-Hotel +R$%d" % refund_unit
+			sell_building_label = "-Hotel +P$%d" % refund_unit
 		elif sel_lvl > 0:
-			sell_building_label = "-Casa +R$%d" % refund_unit
+			sell_building_label = "-Casa +P$%d" % refund_unit
 
 	var can_mortgage: bool = (_selected_property_tile >= 0) and _can_toggle_mortgage(pid, _selected_property_tile)
 	var mortgage_label: String = "Hipotec."
@@ -1713,10 +1857,10 @@ func _sync_hud() -> void:
 		var sel_m_tile: Dictionary = tiles[_selected_property_tile]
 		if mortgaged_tiles.get(_selected_property_tile, false):
 			var redeem_cost: int = _get_redeem_cost(sel_m_tile)
-			mortgage_label = "Desip. -R$%d" % redeem_cost
+			mortgage_label = "Desip. -P$%d" % redeem_cost
 		else:
 			var m_val: int = _get_mortgage_value(sel_m_tile)
-			mortgage_label = "Hip. +R$%d" % m_val
+			mortgage_label = "Hip. +P$%d" % m_val
 
 	var can_end: bool = _can_end_turn()
 	var can_trade: bool = _can_open_trade()
@@ -1995,7 +2139,7 @@ func build_on_property(tile_idx: int) -> void:
 		return
 
 	var tile: Dictionary = tiles[tile_idx]
-	var cost: int = int(tile.get("house_cost", 50))
+	var cost: int = _get_effective_house_cost(tile)
 	var current_lvl: int = property_buildings.get(tile_idx, 0)
 
 	player["money"] = int(player["money"]) - cost
@@ -2003,11 +2147,11 @@ func build_on_property(tile_idx: int) -> void:
 		bank_houses_left += 4
 		bank_hotels_left -= 1
 		property_buildings[tile_idx] = 5
-		_log_both("Bah, estância de luxo! %s construiu um HOTEL em %s (R$ %d)." % [str(player["name"]), str(tile["name"]), cost])
+		_log_both("Bah, estância de luxo! %s construiu um HOTEL em %s (%d Pilas)." % [str(player["name"]), str(tile["name"]), cost])
 	else:
 		bank_houses_left -= 1
 		property_buildings[tile_idx] = current_lvl + 1
-		_log_both("%s construiu casa (%d/4) em %s por R$ %d." % [str(player["name"]), current_lvl + 1, str(tile["name"]), cost])
+		_log_both("%s construiu casa (%d/4) em %s por %d Pilas." % [str(player["name"]), current_lvl + 1, str(tile["name"]), cost])
 
 	if board_view != null:
 		board_view.update_buildings(property_buildings)
@@ -2017,7 +2161,7 @@ func build_on_property(tile_idx: int) -> void:
 	if hud != null:
 		hud.flash_action_feedback("positive")
 	var b_title: String = "Hotel Construído!" if current_lvl == 4 else "Casa Construída!"
-	_broadcast_toast_event(b_title, "%s ampliou %s (R$ %d)." % [str(player["name"]), str(tile["name"]), cost], "build")
+	_broadcast_toast_event(b_title, "%s ampliou %s (P$ %d)." % [str(player["name"]), str(tile["name"]), cost], "build")
 
 func sell_building_on_property(tile_idx: int) -> void:
 	var player: Dictionary = players[current_player_index]
@@ -2038,15 +2182,15 @@ func sell_building_on_property(tile_idx: int) -> void:
 		property_buildings[tile_idx] = houses_to_place
 		player["money"] = int(player["money"]) + refund
 		if houses_to_place == 4:
-			_log_both("%s vendeu o HOTEL de %s por R$ %d (voltou para 4 casas)." % [str(player["name"]), str(tile["name"]), refund])
+			_log_both("%s vendeu o HOTEL de %s por %d Pilas (voltou para 4 casas)." % [str(player["name"]), str(tile["name"]), refund])
 		else:
-			_log_both("Banco sem 4 casas em estoque! %s demoliu o HOTEL de %s para %d casa(s) e recebeu R$ %d." % [str(player["name"]), str(tile["name"]), houses_to_place, refund])
+			_log_both("Banco sem 4 casas em estoque! %s demoliu o HOTEL de %s para %d casa(s) e recebeu %d Pilas." % [str(player["name"]), str(tile["name"]), houses_to_place, refund])
 	else:
 		var next_lvl: int = current_lvl - 1
 		bank_houses_left += 1
 		property_buildings[tile_idx] = next_lvl
 		player["money"] = int(player["money"]) + half_cost
-		_log_both("%s vendeu 1 casa em %s por R$ %d (%d/4 restante)." % [str(player["name"]), str(tile["name"]), half_cost, next_lvl])
+		_log_both("%s vendeu 1 casa em %s por %d Pilas (%d/4 restante)." % [str(player["name"]), str(tile["name"]), half_cost, next_lvl])
 
 	if int(player["money"]) >= 0:
 		_last_creditor_id = -1
@@ -2119,7 +2263,7 @@ func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
 			if new_lvl != old_lvl:
 				changes_count += 1
 				var tile: Dictionary = tiles[g_idx]
-				var h_cost: int = int(tile.get("house_cost", 50))
+				var h_cost: int = _get_effective_house_cost(tile)
 				var sell_unit: int = _get_building_sell_value(tile)
 				if new_lvl > old_lvl:
 					net_cost += (new_lvl - old_lvl) * h_cost
@@ -2165,7 +2309,7 @@ func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
 	if board_view != null:
 		board_view.update_buildings(property_buildings)
 	_play_sfx("build" if net_cost >= 0 else "mortgage")
-	var verb_txt: String = "investiu R$ %d" % net_cost if net_cost >= 0 else "recebeu R$ %d em demolicoes" % absi(net_cost)
+	var verb_txt: String = "investiu %d Pilas" % net_cost if net_cost >= 0 else "recebeu %d Pilas em demolições" % absi(net_cost)
 	_log_both("%s confirmou carrinho de obras (%d lotes atualizados, %s)." % [str(player["name"]), changes_count, verb_txt])
 	_check_post_liquidation_bankruptcy(player)
 	if current_state != TurnState.GAME_OVER:
@@ -2189,12 +2333,12 @@ func toggle_mortgage(tile_idx: int) -> void:
 		var redeem_cost: int = _get_redeem_cost(tile)
 		player["money"] = int(player["money"]) - redeem_cost
 		mortgaged_tiles[tile_idx] = false
-		_last_tile_summary = "%s desipotecou %s por R$ %d." % [str(player["name"]), str(tile["name"]), redeem_cost]
+		_last_tile_summary = "%s desipotecou %s por %d Pilas." % [str(player["name"]), str(tile["name"]), redeem_cost]
 		_log_both(_last_tile_summary)
 	else:
 		player["money"] = int(player["money"]) + m_val
 		mortgaged_tiles[tile_idx] = true
-		_last_tile_summary = "%s hipotecou %s e levantou R$ %d." % [str(player["name"]), str(tile["name"]), m_val]
+		_last_tile_summary = "%s hipotecou %s e levantou %d Pilas." % [str(player["name"]), str(tile["name"]), m_val]
 		_log_both(_last_tile_summary)
 
 	if int(player["money"]) >= 0:
@@ -2230,9 +2374,9 @@ func pay_bail() -> void:
 	player["in_jail"] = false
 	player["jail_turns"] = 0
 	var rolled_this_turn: bool = (current_state == TurnState.MANAGEMENT)
-	_last_tile_summary = "%s pagou R$ %d de fiança e saiu do Xadrez!" % [str(player["name"]), bail]
+	_last_tile_summary = "%s pagou %d Pilas de fiança e saiu do Xadrez!" % [str(player["name"]), bail]
 	if rolled_this_turn:
-		_last_tile_summary = "%s pagou R$ %d de fiança e estará livre na próxima rodada." % [str(player["name"]), bail]
+		_last_tile_summary = "%s pagou %d Pilas de fiança e estará livre na próxima rodada." % [str(player["name"]), bail]
 	_log_both(_last_tile_summary)
 	_sync_hud()
 	if hud != null:
@@ -2304,7 +2448,7 @@ func roll_dice() -> void:
 				player["in_jail"] = false
 				player["jail_turns"] = 0
 				_last_creditor_id = -1
-				_log_both("3ª tentativa sem dupla! %s pagou R$ %d de fiança e andou %d casas." % [str(player["name"]), bail, total])
+				_log_both("3ª tentativa sem dupla! %s pagou %d Pilas de fiança e andou %d casas." % [str(player["name"]), bail, total])
 				_check_bankruptcy(player, false)
 				if current_state == TurnState.GAME_OVER:
 					_is_animating = false
@@ -2380,15 +2524,15 @@ func move_player(player: Dictionary, steps: int, allow_pass_go: bool = true, dic
 			return
 
 	if allow_pass_go and steps > 0 and (old_pos + steps) >= size:
-		var bonus: int = int(board_config.get("pass_go_bonus", 200))
+		var bonus: int = _get_effective_pass_go_bonus()
 		player["money"] = int(player["money"]) + bonus
 		if int(player["money"]) >= 0:
 			_last_creditor_id = -1
-		_log_both("Cruzou o Galpão Central! Ganhou R$ %d." % bonus)
+		_log_both("Cruzou o Galpão Central! Ganhou %d Pilas." % bonus)
 		if board_view != null:
-			board_view.play_tile_pulse(0, Color("#52B788"), "+R$ %d" % bonus)
+			board_view.play_tile_pulse(0, Color("#52B788"), "+P$ %d" % bonus)
 		if hud != null:
-			hud.show_event_toast("Galpão Central!", "%s recebeu +R$ %d pela volta." % [str(player["name"]), bonus], "positive")
+			hud.show_event_toast("Galpão Central!", "%s recebeu +%d Pilas pela volta." % [str(player["name"]), bonus], "positive")
 
 	var landed_tile: Dictionary = tiles[new_pos]
 	_log_both("%s parou em [%d] %s." % [str(player["name"]), new_pos, str(landed_tile["name"])])
@@ -2398,20 +2542,31 @@ func _calculate_rent(tile: Dictionary, pos: int, owner_id: int, dice_sum: int) -
 	if mortgaged_tiles.get(pos, false):
 		return 0
 
+	var season_id: String = get_current_season_id() if _seasons_enabled else ""
 	if str(tile.get("type", "")) == "COMPANY":
 		var mult: int = int(tile.get("multiplier", 40))
 		var roll_ref: int = dice_sum if dice_sum > 0 else (_last_dice_sum if _last_dice_sum > 0 else randi_range(2, 12))
-		return roll_ref * mult
+		var comp_rent: int = roll_ref * mult
+		if season_id == "PRIMAVERA":
+			comp_rent = roundi(float(comp_rent) * 1.20)
+		return comp_rent
 
 	var rent_list: Array = tile.get("rent", [])
 	var max_rent_idx: int = maxi(0, rent_list.size() - 1)
 	var b_lvl: int = clampi(property_buildings.get(pos, 0), 0, max_rent_idx)
 	var rent_val: int = int(rent_list[b_lvl]) if rent_list.size() > 0 else 0
 
+	var group_name: String = str(tile.get("group", ""))
 	if b_lvl == 0:
-		var group_name: String = str(tile.get("group", ""))
 		if _has_monopoly(owner_id, group_name):
 			rent_val *= 2
+
+	if season_id == "PRIMAVERA" and (group_name == "MARROM" or group_name == "AZUL_CLARO" or group_name == "ROSA"):
+		rent_val = roundi(float(rent_val) * 1.20)
+	elif season_id == "VERAO" and (group_name == "LARANJA" or group_name == "VERMELHO" or group_name == "AMARELO"):
+		rent_val = roundi(float(rent_val) * 1.25)
+	elif season_id == "INVERNO" and b_lvl == 0:
+		rent_val = maxi(1, roundi(float(rent_val) * 0.90))
 
 	return rent_val
 
@@ -2423,10 +2578,10 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 			if not property_owners.has(pos):
 				if tile_type == "COMPANY":
 					var mult: int = int(tile.get("multiplier", 40))
-					_last_tile_summary = "Livre: %s | Preço: R$ %d | Aluguel: %dx soma dos dados" % [str(tile["name"]), price, mult]
+					_last_tile_summary = "Livre: %s | Preço: P$ %d | Aluguel: %dx soma dos dados" % [str(tile["name"]), price, mult]
 				else:
 					var rent_preview: int = _calculate_rent(tile, pos, -1, 7)
-					_last_tile_summary = "Livre: %s | Preço: R$ %d | Aluguel base: R$ %d" % [str(tile["name"]), price, rent_preview]
+					_last_tile_summary = "Livre: %s | Preço: P$ %d | Aluguel base: P$ %d" % [str(tile["name"]), price, rent_preview]
 				current_state = TurnState.EVALUATING
 			else:
 				var owner_id: int = property_owners[pos]
@@ -2446,28 +2601,28 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 						if int(player["money"]) < 0:
 							_last_creditor_id = owner_id
 						var owner_name: String = str(owner.get("name", "Banco"))
-						_last_tile_summary = "Pagou R$ %d de aluguel em %s para %s!" % [rent_amount, str(tile["name"]), owner_name]
+						_last_tile_summary = "Pagou %d Pilas de aluguel em %s para %s!" % [rent_amount, str(tile["name"]), owner_name]
 						_log_both(_last_tile_summary)
 						_play_sfx("pay")
 						if board_view != null:
-							board_view.play_tile_pulse(pos, Color("#FF6B6B"), "-R$ %d" % rent_amount)
+							board_view.play_tile_pulse(pos, Color("#FF6B6B"), "-P$ %d" % rent_amount)
 						if hud != null:
-							hud.show_event_toast("Aluguel Pago!", "%s pagou R$ %d para %s." % [str(player["name"]), rent_amount, owner_name], "negative")
+							hud.show_event_toast("Aluguel Pago!", "%s pagou %d Pilas para %s." % [str(player["name"]), rent_amount, owner_name], "negative")
 						_check_bankruptcy(player, false)
 					if current_state != TurnState.GAME_OVER:
 						current_state = TurnState.MANAGEMENT
 		"TAX":
-			var tax: int = int(tile.get("amount", 0))
+			var tax: int = _get_effective_tax_amount(tile)
 			player["money"] = int(player["money"]) - tax
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
-			_last_tile_summary = "%s: pagou R$ %d." % [str(tile["name"]), tax]
+			_last_tile_summary = "%s: pagou %d Pilas." % [str(tile["name"]), tax]
 			_log_both(_last_tile_summary)
 			_play_sfx("pay")
 			if board_view != null:
-				board_view.play_tile_pulse(pos, Color("#FF6B6B"), "-R$ %d" % tax)
+				board_view.play_tile_pulse(pos, Color("#FF6B6B"), "-P$ %d" % tax)
 			if hud != null:
-				hud.show_event_toast(str(tile["name"]), "%s pagou R$ %d ao Banco." % [str(player["name"]), tax], "negative")
+				hud.show_event_toast(str(tile["name"]), "%s pagou %d Pilas ao Banco." % [str(player["name"]), tax], "negative")
 			_check_bankruptcy(player, false)
 			if current_state != TurnState.GAME_OVER:
 				current_state = TurnState.MANAGEMENT
@@ -2485,7 +2640,7 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 func _trigger_20_setembro_event(player: Dictionary, pos: int) -> void:
 	# Evento temático Feriadão de 20 de Setembro (Opção A - Festa Farroupilha equilibrada no Modo Clássico):
 	# 1. Havendo lote livre e quórum (>=2 solventes), convoca Acampamento de Remates (Leilão Farroupilha) imediato.
-	# 2. Caso contrário, promove o Rateio de Chimarrão no Galpão (+R$ 20 por adversário solvente, soma zero).
+	# 2. Caso contrário, promove o Rateio de Chimarrão no Galpão (+20 Pilas por adversário solvente, soma zero).
 	var p_name: String = str(player.get("name", "Estanceiro"))
 	_play_sfx("festival")
 	if board_view != null:
@@ -2516,31 +2671,50 @@ func _trigger_20_setembro_event(player: Dictionary, pos: int) -> void:
 	if collected_total > 0:
 		if int(player.get("money", 0)) >= 0:
 			_last_creditor_id = -1
-		_last_tile_summary = "20 de Setembro! Rateio de Chimarrão rendeu +R$ %d para %s!" % [collected_total, p_name]
-		_log_both("Festa de 20 de Setembro! Rateio de Chimarrão no Galpão: %d estanceiro(s) contribuíram com R$ %d cada (+R$ %d para %s)." % [contributors_count, payer_contrib, collected_total, p_name])
-		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Rateio de Chimarrão no Galpão: %s recebeu +R$ %d!" % [p_name, collected_total], "chance")
+		_last_tile_summary = "20 de Setembro! Rateio de Chimarrão rendeu +%d Pilas para %s!" % [collected_total, p_name]
+		_log_both("Festa de 20 de Setembro! Rateio de Chimarrão no Galpão: %d estanceiro(s) contribuíram com %d Pilas cada (+%d Pilas para %s)." % [contributors_count, payer_contrib, collected_total, p_name])
+		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Rateio de Chimarrão no Galpão: %s recebeu +%d Pilas!" % [p_name, collected_total], "chance")
 	else:
 		var bank_gift: int = 50
 		player["money"] = int(player["money"]) + bank_gift
 		if int(player.get("money", 0)) >= 0:
 			_last_creditor_id = -1
-		_last_tile_summary = "20 de Setembro! %s recebeu pró-labore farroupilha de +R$ %d!" % [p_name, bank_gift]
-		_log_both("Festa de 20 de Setembro! Sem lotes para leilão nem rateio — %s recebeu +R$ %d da Semana Farroupilha." % [p_name, bank_gift])
-		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Semana Farroupilha: %s ganhou +R$ %d." % [p_name, bank_gift], "chance")
+		_last_tile_summary = "20 de Setembro! %s recebeu pró-labore farroupilha de +%d Pilas!" % [p_name, bank_gift]
+		_log_both("Festa de 20 de Setembro! Sem lotes para leilão nem rateio — %s recebeu +%d Pilas da Semana Farroupilha." % [p_name, bank_gift])
+		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Semana Farroupilha: %s ganhou +%d Pilas." % [p_name, bank_gift], "chance")
+
+func _resolve_seasonal_card_amount(card: Dictionary) -> Dictionary:
+	var match_s: String = str(card.get("season_match", ""))
+	var is_match: bool = _seasons_enabled and match_s != "" and get_current_season_id() == match_s
+	var base_amt: int = int(card.get("amount", 0))
+	var eff_amt: int = int(card.get("season_amount", base_amt)) if is_match else base_amt
+	return { "amount": eff_amt, "matched": is_match, "season": match_s }
 
 func _describe_chance_card_effect(card: Dictionary) -> Dictionary:
 	var ctype: String = str(card.get("type", ""))
 	match ctype:
 		"GAIN_MONEY":
-			return { "badge": "+ RECEITA • +R$ %d" % int(card.get("amount", 0)), "tone": "positive" }
+			return { "badge": "+ RECEITA • +P$ %d" % int(card.get("amount", 0)), "tone": "positive" }
+		"SEASONAL_GAIN":
+			var s_info: Dictionary = _resolve_seasonal_card_amount(card)
+			var s_amt: int = int(s_info.get("amount", 0))
+			if bool(s_info.get("matched", false)):
+				return { "badge": "+ SAFRA SAZONAL ATIVA • +P$ %d" % s_amt, "tone": "positive" }
+			return { "badge": "+ SAZONAL • +P$ %d" % s_amt, "tone": "positive" }
 		"COLLECT_FROM_ALL":
-			return { "badge": "+ RECEITA • +R$ %d DE CADA JOGADOR" % int(card.get("amount", 0)), "tone": "positive" }
+			return { "badge": "+ RECEITA • +P$ %d DE CADA JOGADOR" % int(card.get("amount", 0)), "tone": "positive" }
 		"PAY_MONEY":
-			return { "badge": "- DESPESA • -R$ %d" % int(card.get("amount", 0)), "tone": "negative" }
+			return { "badge": "- DESPESA • -P$ %d" % int(card.get("amount", 0)), "tone": "negative" }
+		"SEASONAL_PAY":
+			var p_info: Dictionary = _resolve_seasonal_card_amount(card)
+			var p_amt: int = int(p_info.get("amount", 0))
+			if bool(p_info.get("matched", false)):
+				return { "badge": "- CLIMA SAZONAL ATIVO • -P$ %d" % p_amt, "tone": "negative" }
+			return { "badge": "- SAZONAL • -P$ %d" % p_amt, "tone": "negative" }
 		"REPAIR_BUILDINGS":
-			return { "badge": "- MANUTENÇÃO • R$ %d/CASA • R$ %d/HOTEL" % [int(card.get("house_cost", 25)), int(card.get("hotel_cost", 100))], "tone": "negative" }
+			return { "badge": "- MANUTENÇÃO • P$ %d/CASA • P$ %d/HOTEL" % [int(card.get("house_cost", 25)), int(card.get("hotel_cost", 100))], "tone": "negative" }
 		"MOVE_TO_START":
-			return { "badge": "➜ MOVIMENTO • GALPÃO CENTRAL (+R$ %d)" % int(board_config.get("pass_go_bonus", 200)), "tone": "move" }
+			return { "badge": "➜ MOVIMENTO • GALPÃO CENTRAL (+P$ %d)" % _get_effective_pass_go_bonus(), "tone": "move" }
 		"MOVE_STEPS":
 			var st: int = int(card.get("steps", 1))
 			var dir_txt: String = "AVANCE %d CASA(S)" % st if st > 0 else "RECUE %d CASA(S)" % absi(st)
@@ -2615,6 +2789,15 @@ func _draw_chance_card(player: Dictionary) -> void:
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
 			current_state = TurnState.MANAGEMENT
+		"SEASONAL_GAIN":
+			var sg_info: Dictionary = _resolve_seasonal_card_amount(card)
+			var sg_amt: int = int(sg_info.get("amount", 0))
+			player["money"] = int(player["money"]) + sg_amt
+			if int(player["money"]) >= 0:
+				_last_creditor_id = -1
+			if bool(sg_info.get("matched", false)):
+				_log_both("Bônus de Estação (%s)! %s recebeu %d Pilas." % [str(get_current_season_info().get("label", "")), str(player["name"]), sg_amt])
+			current_state = TurnState.MANAGEMENT
 		"PAY_MONEY":
 			var amt: int = int(card.get("amount", 0))
 			player["money"] = int(player["money"]) - amt
@@ -2623,15 +2806,26 @@ func _draw_chance_card(player: Dictionary) -> void:
 			_check_bankruptcy(player, false)
 			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
+		"SEASONAL_PAY":
+			var sp_info: Dictionary = _resolve_seasonal_card_amount(card)
+			var sp_amt: int = int(sp_info.get("amount", 0))
+			player["money"] = int(player["money"]) - sp_amt
+			if int(player["money"]) < 0:
+				_last_creditor_id = -1
+			if bool(sp_info.get("matched", false)):
+				_log_both("Agravante de Estação (%s)! %s arcou com %d Pilas." % [str(get_current_season_info().get("label", "")), str(player["name"]), sp_amt])
+			_check_bankruptcy(player, false)
+			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
+				current_state = TurnState.MANAGEMENT
 		"MOVE_TO_START":
-			var bonus: int = int(board_config.get("pass_go_bonus", 200))
+			var bonus: int = _get_effective_pass_go_bonus()
 			player["position"] = 0
 			player["money"] = int(player["money"]) + bonus
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
 			if board_view != null:
 				board_view.update_token_positions(players)
-			_log_both("%s recebeu R$ %d no Galpão Central!" % [str(player["name"]), bonus])
+			_log_both("%s recebeu %d Pilas no Galpão Central!" % [str(player["name"]), bonus])
 			current_state = TurnState.MANAGEMENT
 		"GO_TO_JAIL":
 			send_to_jail(player)
@@ -2664,7 +2858,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 				player["money"] = int(player["money"]) - repair_total
 				if int(player["money"]) < 0:
 					_last_creditor_id = -1
-				_log_both("Manutenção: %s pagou R$ %d (%d casa(s), %d hotel(is))." % [str(player["name"]), repair_total, houses_count, hotels_count])
+				_log_both("Manutenção: %s pagou %d Pilas (%d casa(s), %d hotel(is))." % [str(player["name"]), repair_total, houses_count, hotels_count])
 				_check_bankruptcy(player, false)
 			else:
 				_log_both("%s não possui construções e escapou do custo de manutenção!" % str(player["name"]))
@@ -2686,7 +2880,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 						break
 			if int(player["money"]) >= 0:
 				_last_creditor_id = -1
-			_log_both("%s arrecadou R$ %d no total dos demais estanceiros!" % [str(player["name"]), collected_total])
+			_log_both("%s arrecadou %d Pilas no total dos demais estanceiros!" % [str(player["name"]), collected_total])
 			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
 		"PAY_ALL":
@@ -2701,7 +2895,7 @@ func _draw_chance_card(player: Dictionary) -> void:
 			player["money"] = int(player["money"]) - paid_total
 			if int(player["money"]) < 0:
 				_last_creditor_id = -1
-			_log_both("%s pagou R$ %d no total (R$ %d para cada estanceiro ativo)." % [str(player["name"]), paid_total, per_player])
+			_log_both("%s pagou %d Pilas no total (%d Pilas para cada estanceiro ativo)." % [str(player["name"]), paid_total, per_player])
 			_check_bankruptcy(player, false)
 			if current_state != TurnState.GAME_OVER and not bool(player.get("bankrupt", false)):
 				current_state = TurnState.MANAGEMENT
@@ -2726,9 +2920,9 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 			if is_active_turn_player:
 				_has_extra_roll = false
 				doubles_count = 0
-			_log_both("Atenção! %s está no vermelho (R$ %d): liquide até R$ %d em obras/hipotecas antes de falir." % [str(player["name"]), int(player["money"]), max_liq])
+			_log_both("Atenção! %s está no vermelho (%d Pilas): liquide até %d Pilas em obras/hipotecas antes de falir." % [str(player["name"]), int(player["money"]), max_liq])
 			return
-		_log_both("Dívida de %s (R$ %d) supera o patrimônio liquidável máximo (R$ %d): falência automática decretada!" % [str(player["name"]), int(player["money"]), max_liq])
+		_log_both("Dívida de %s (%d Pilas) supera o patrimônio liquidável máximo (%d Pilas): falência automática decretada!" % [str(player["name"]), int(player["money"]), max_liq])
 
 	player["bankrupt"] = true
 	if is_active_turn_player:
@@ -2800,51 +2994,129 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 	if active_count > 1:
 		_play_sfx("bankrupt")
 	if active_count <= 1:
-		current_state = TurnState.GAME_OVER
-		_play_sfx("victory")
-		_match_session_token += 1
-		_bot_turn_token += 1
-		_is_bot_thinking = false
-		_is_animating = false
-		if board_view != null:
-			board_view.cancel_animations()
-		var last_winner: String = str(winner_player.get("name", "Campeão")) if not winner_player.is_empty() else "-"
+		_trigger_victory(winner_player)
+
+func _trigger_victory(winner_player: Dictionary, custom_summary: String = "", victory_reason: String = "") -> void:
+	current_state = TurnState.GAME_OVER
+	_play_sfx("victory")
+	_match_session_token += 1
+	_bot_turn_token += 1
+	_is_bot_thinking = false
+	_is_animating = false
+	if board_view != null:
+		board_view.cancel_animations()
+	var last_winner: String = str(winner_player.get("name", "Campeão")) if not winner_player.is_empty() else "-"
+	if custom_summary != "":
+		_last_tile_summary = custom_summary
+	else:
 		_last_tile_summary = "Vitória de %s! Dominou os pampas!" % last_winner
-		_log_both(_last_tile_summary)
-		_sync_active_player_highlight()
-		_sync_hud()
-		if hud != null and not winner_player.is_empty():
-			var w_id: int = int(winner_player.get("id", 0))
-			var w_props: Array = winner_player.get("properties", [])
-			var w_houses: int = 0
-			var w_hotels: int = 0
-			for tid_var: Variant in w_props:
-				var tid_int: int = int(tid_var)
-				var b_lvl: int = property_buildings.get(tid_int, 0)
-				if b_lvl >= 5:
-					w_hotels += 1
-				elif b_lvl > 0:
-					w_houses += b_lvl
-			var w_color: Color = board_view.get_player_color(w_id) if board_view != null else Color("#E9C46A")
-			var victory_info: Dictionary = {
-				"name": str(winner_player.get("name", "Campeão")),
-				"is_bot": bool(winner_player.get("is_bot", false)),
-				"pawn_id": str(winner_player.get("pawn_id", "cuia")),
-				"pawn_name": str(winner_player.get("pawn_name", "Cuia de Chimarrão")),
-				"pawn_code": str(winner_player.get("pawn_code", "")),
-				"color": w_color,
-				"color_hex": "#" + w_color.to_html(false),
-				"money": int(winner_player.get("money", 0)),
-				"properties_count": w_props.size(),
-				"houses_count": w_houses,
-				"hotels_count": w_hotels,
-				"rounds_played": current_round,
-				"total_players": players.size()
-			}
-			_last_victory_info = victory_info.duplicate(true)
+	_log_both(_last_tile_summary)
+	_sync_active_player_highlight()
+	_sync_hud()
+	if not winner_player.is_empty():
+		var w_id: int = int(winner_player.get("id", 0))
+		var w_props: Array = winner_player.get("properties", [])
+		var w_houses: int = 0
+		var w_hotels: int = 0
+		for tid_var: Variant in w_props:
+			var tid_int: int = int(tid_var)
+			var b_lvl: int = property_buildings.get(tid_int, 0)
+			if b_lvl >= 5:
+				w_hotels += 1
+			elif b_lvl > 0:
+				w_houses += b_lvl
+		var w_color: Color = board_view.get_player_color(w_id) if board_view != null else Color("#E9C46A")
+		var victory_info: Dictionary = {
+			"name": str(winner_player.get("name", "Campeão")),
+			"is_bot": bool(winner_player.get("is_bot", false)),
+			"pawn_id": str(winner_player.get("pawn_id", "cuia")),
+			"pawn_name": str(winner_player.get("pawn_name", "Cuia de Chimarrão")),
+			"pawn_code": str(winner_player.get("pawn_code", "")),
+			"color": w_color,
+			"color_hex": "#" + w_color.to_html(false),
+			"money": int(winner_player.get("money", 0)),
+			"net_worth": _compute_player_net_worth(winner_player),
+			"monopolies_count": _count_player_monopolies(w_id),
+			"victory_reason": victory_reason,
+			"properties_count": w_props.size(),
+			"houses_count": w_houses,
+			"hotels_count": w_hotels,
+			"rounds_played": current_round,
+			"total_players": players.size()
+		}
+		_last_victory_info = victory_info.duplicate(true)
+		if hud != null:
 			hud.show_victory_modal(victory_info)
-			match_finished.emit(victory_info.duplicate(true))
-			_broadcast_state_if_host()
+		match_finished.emit(victory_info.duplicate(true))
+		_broadcast_state_if_host()
+
+func _count_player_monopolies(player_id: int) -> int:
+	var groups_seen: Dictionary[String, bool] = {}
+	for tile: Dictionary in tiles:
+		var g_name: String = str(tile.get("group", ""))
+		if g_name == "" or str(tile.get("type", "")) != "PROPERTY":
+			continue
+		if not groups_seen.has(g_name):
+			groups_seen[g_name] = _has_monopoly(player_id, g_name)
+	var count: int = 0
+	for ok: bool in groups_seen.values():
+		if ok:
+			count += 1
+	return count
+
+func _compute_player_net_worth(player: Dictionary) -> int:
+	var worth: int = int(player.get("money", 0))
+	var props: Array = player.get("properties", [])
+	for tid_var: Variant in props:
+		var tid: int = int(tid_var)
+		if tid < 0 or tid >= tiles.size():
+			continue
+		var tile: Dictionary = tiles[tid]
+		var price: int = int(tile.get("price", 0))
+		worth += _get_mortgage_value(tile) if mortgaged_tiles.get(tid, false) else price
+		var b_lvl: int = clampi(property_buildings.get(tid, 0), 0, 5)
+		if b_lvl > 0:
+			worth += b_lvl * int(tile.get("house_cost", 50))
+	return worth
+
+func _check_dynamic_victory_conditions() -> bool:
+	if _game_rules_mode != "dynamic" or not _match_active or current_state == TurnState.GAME_OVER:
+		return false
+
+	for p: Dictionary in players:
+		if bool(p.get("bankrupt", false)):
+			continue
+		var pid: int = int(p.get("id", -1))
+		var mono_count: int = _count_player_monopolies(pid)
+		if mono_count >= DYNAMIC_MONOPOLY_GOAL:
+			var m_summary: String = "%s atingiu %d monopólios e venceu na Estância Dinâmica!" % [str(p.get("name", "Campeão")), mono_count]
+			_trigger_victory(p, m_summary, "3 Monopólios")
+			return true
+		var net_worth: int = _compute_player_net_worth(p)
+		if _net_worth_goal > 0 and net_worth >= _net_worth_goal:
+			var n_summary: String = "%s alcançou %d Pilas de patrimônio e dominou a Estância Dinâmica!" % [str(p.get("name", "Campeão")), net_worth]
+			_trigger_victory(p, n_summary, "Meta de Patrimônio")
+			return true
+
+	if _round_limit > 0 and current_round > _round_limit:
+		var best_p: Dictionary = {}
+		var best_worth: int = -999999999
+		var best_cash: int = -999999999
+		for p: Dictionary in players:
+			if bool(p.get("bankrupt", false)):
+				continue
+			var w: int = _compute_player_net_worth(p)
+			var c: int = int(p.get("money", 0))
+			if best_p.is_empty() or w > best_worth or (w == best_worth and c > best_cash):
+				best_p = p
+				best_worth = w
+				best_cash = c
+		if not best_p.is_empty():
+			var r_summary: String = "Fim das %d rodadas! %s venceu por patrimônio (%d Pilas)!" % [_round_limit, str(best_p.get("name", "Campeão")), best_worth]
+			_trigger_victory(best_p, r_summary, "Maior Patrimônio (30 Rodadas)")
+			return true
+
+	return false
 
 func buy_current_property() -> void:
 	if not _can_buy_current_tile():
@@ -2859,18 +3131,18 @@ func buy_current_property() -> void:
 	var owned_props: Array = player["properties"]
 	owned_props.append(pos)
 	_selected_property_tile = pos
-	_last_tile_summary = "%s comprou %s por R$ %d!" % [str(player["name"]), str(tile["name"]), price]
+	_last_tile_summary = "%s comprou %s por %d Pilas!" % [str(player["name"]), str(tile["name"]), price]
 	_log_both(_last_tile_summary)
 	_play_sfx("buy")
 	property_purchased.emit(int(player["id"]), pos, price)
 	if board_view != null:
 		board_view.update_ownership(property_owners, mortgaged_tiles)
-		_broadcast_tile_pulse(pos, board_view.get_player_color(int(player["id"])), "COMPRADO! -R$ %d" % price)
+		_broadcast_tile_pulse(pos, board_view.get_player_color(int(player["id"])), "COMPRADO! -P$ %d" % price)
 	_finish_post_move_step(player)
 	_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("positive")
-	_broadcast_toast_event("Nova Escritura!", "%s adquiriu %s por R$ %d." % [str(player["name"]), str(tile["name"]), price], "positive")
+	_broadcast_toast_event("Nova Escritura!", "%s adquiriu %s por P$ %d." % [str(player["name"]), str(tile["name"]), price], "positive")
 
 func send_to_jail(player: Dictionary) -> void:
 	var jail_idx: int = int(board_config.get("jail_tile_index", 10))
@@ -2905,6 +3177,8 @@ func _advance_turn_after_bankruptcy(finished_player_id: int) -> void:
 			network.broadcast_match_event(_active_net_session_id, "TRADE_OFFER_CLOSED", {})
 
 	_advance_round_if_complete(finished_player_id)
+	if _check_dynamic_victory_conditions():
+		return
 
 	var total_p: int = players.size()
 	for _step: int in range(total_p):
@@ -3002,10 +3276,10 @@ func _validate_trade_proposal(
 			return { "ok": false, "reason": "Troca negada: propriedade em grupo com construção não pode ser trocada." }
 
 	if cash_delta > 0 and int(sender["money"]) < cash_delta:
-		return { "ok": false, "reason": "Troca negada: saldo insuficiente para dar R$ %d." % cash_delta }
+		return { "ok": false, "reason": "Troca negada: saldo insuficiente para dar %d Pilas." % cash_delta }
 	var abs_cash: int = absi(cash_delta)
 	if cash_delta < 0 and int(target["money"]) < abs_cash:
-		return { "ok": false, "reason": "Troca negada: %s não tem R$ %d em caixa." % [str(target["name"]), abs_cash] }
+		return { "ok": false, "reason": "Troca negada: %s não tem %d Pilas em caixa." % [str(target["name"]), abs_cash] }
 
 	return { "ok": true, "reason": "" }
 
@@ -3054,11 +3328,11 @@ func propose_trade(target_id: int, offer_tile: int, request_tile: int, cash_delt
 	if offer_name != "":
 		sender_items.append(offer_name)
 	if cash_delta > 0:
-		sender_items.append("R$ %d" % cash_delta)
+		sender_items.append("P$ %d" % cash_delta)
 	if req_name != "":
 		target_items.append(req_name)
 	if cash_delta < 0:
-		target_items.append("R$ %d" % abs_cash)
+		target_items.append("P$ %d" % abs_cash)
 
 	_pending_trade_offer = {
 		"offer_id": offer_id,
@@ -3156,11 +3430,11 @@ func _commit_trade_agreement(
 	if offer_tile >= 0:
 		sender_gives.append(str(tiles[offer_tile]["name"]))
 	if cash_delta > 0:
-		sender_gives.append("R$ %d" % cash_delta)
+		sender_gives.append("P$ %d" % cash_delta)
 	if request_tile >= 0:
 		target_gives.append(str(tiles[request_tile]["name"]))
 	if cash_delta < 0:
-		target_gives.append("R$ %d" % abs_cash)
+		target_gives.append("P$ %d" % abs_cash)
 
 	var sender_label: String = "%s [BOT]" % str(sender["name"]) if bool(sender.get("is_bot", false)) else str(sender["name"])
 	var target_label: String = "%s [BOT]" % str(target["name"]) if bool(target.get("is_bot", false)) else str(target["name"])
@@ -3240,7 +3514,7 @@ func start_owned_property_auction(tile_idx: int) -> bool:
 		if pid != seller_id and not bool(p.get("bankrupt", false)) and int(p.get("money", 0)) >= min_bid:
 			eligible.append(pid)
 	if eligible.is_empty():
-		_log_both("Nenhum adversário possui saldo mínimo (R$ %d) para abrir leilão de %s." % [min_bid, str(tile.get("name", "Lote"))])
+		_log_both("Nenhum adversário possui saldo mínimo (%d Pilas) para abrir leilão de %s." % [min_bid, str(tile.get("name", "Lote"))])
 		return false
 
 	var color_hex: String = str(tile.get("color", "#2D5248"))
@@ -3268,8 +3542,8 @@ func start_owned_property_auction(tile_idx: int) -> bool:
 		"turn_bidder_index": 0
 	}
 
-	_log_both("=== LEILÃO PARTICULAR: %s ofertou %s (lance inicial R$ %d)! ===" % [str(seller.get("name", "Estanceiro")), str(tile["name"]), min_bid])
-	_broadcast_toast_event("Leilão de Terreno!", "%s colocou %s à venda a partir de R$ %d." % [str(seller.get("name", "Estanceiro")), str(tile["name"]), min_bid], "turn")
+	_log_both("=== LEILÃO PARTICULAR: %s ofertou %s (lance inicial %d Pilas)! ===" % [str(seller.get("name", "Estanceiro")), str(tile["name"]), min_bid])
+	_broadcast_toast_event("Leilão de Terreno!", "%s colocou %s à venda a partir de P$ %d." % [str(seller.get("name", "Estanceiro")), str(tile["name"]), min_bid], "turn")
 	if hud != null:
 		hud.hide_deed_modal()
 	_sync_auction_ui_and_network()
@@ -3318,8 +3592,8 @@ func start_periodic_land_auction(forced_tile_idx: int = -1) -> bool:
 		"turn_bidder_index": 0
 	}
 
-	_log_both("=== LEILÃO DA RODADA %d: %s (Preço base R$ %d • Lance inicial R$ %d)! ===" % [current_round, str(tile["name"]), base_price, min_bid])
-	_broadcast_toast_event("Leilão Aberto!", "%s em disputa a partir de R$ %d!" % [str(tile["name"]), min_bid], "turn")
+	_log_both("=== LEILÃO DA RODADA %d: %s (Preço base P$ %d • Lance inicial P$ %d)! ===" % [current_round, str(tile["name"]), base_price, min_bid])
+	_broadcast_toast_event("Leilão Aberto!", "%s em disputa a partir de P$ %d!" % [str(tile["name"]), min_bid], "turn")
 	_sync_auction_ui_and_network()
 	_maybe_step_auction_bot()
 	return true
@@ -3352,14 +3626,14 @@ func submit_auction_bid(bidder_id: int, bid_amount: int) -> void:
 	var min_next: int = _get_auction_min_next_bid()
 	var bidder_money: int = int(bidder.get("money", 0))
 	if bid_amount < min_next or bid_amount > bidder_money:
-		_log_both("Lance inválido de %s (R$ %d)." % [str(bidder["name"]), bid_amount])
+		_log_both("Lance inválido de %s (%d Pilas)." % [str(bidder["name"]), bid_amount])
 		return
 
 	_auction_state["current_bid"] = bid_amount
 	_auction_state["highest_bidder_id"] = bidder_id
 	_auction_state["highest_bidder_name"] = "%s [BOT]" % str(bidder["name"]) if bool(bidder.get("is_bot", false)) else str(bidder["name"])
 
-	_log_both("Leilão: %s cobriu para R$ %d!" % [str(_auction_state["highest_bidder_name"]), bid_amount])
+	_log_both("Leilão: %s cobriu para %d Pilas!" % [str(_auction_state["highest_bidder_name"]), bid_amount])
 	_play_sfx("auction_bid")
 	_advance_auction_turn(bidder_id)
 
@@ -3449,13 +3723,13 @@ func _finalize_auction() -> void:
 			property_purchased.emit(winner_id, tile_idx, winning_bid)
 			_play_sfx("auction_win")
 			if seller_id >= 0:
-				_log_both("Martelo batido! %s comprou %s de %s em leilão por R$ %d!" % [str(winner["name"]), tile_name, str(_get_player_by_id(seller_id).get("name", "Vendedor")), winning_bid])
+				_log_both("Martelo batido! %s comprou %s de %s em leilão por %d Pilas!" % [str(winner["name"]), tile_name, str(_get_player_by_id(seller_id).get("name", "Vendedor")), winning_bid])
 			else:
-				_log_both("Martelo batido! %s arrematou %s no leilão por R$ %d!" % [str(winner["name"]), tile_name, winning_bid])
-			_broadcast_toast_event("Leilão Arrematado!", "%s levou %s por R$ %d." % [str(winner["name"]), tile_name, winning_bid], "positive")
+				_log_both("Martelo batido! %s arrematou %s no leilão por %d Pilas!" % [str(winner["name"]), tile_name, winning_bid])
+			_broadcast_toast_event("Leilão Arrematado!", "%s levou %s por P$ %d." % [str(winner["name"]), tile_name, winning_bid], "positive")
 			if board_view != null:
 				board_view.update_ownership(property_owners, mortgaged_tiles)
-				_broadcast_tile_pulse(tile_idx, board_view.get_player_color(winner_id), "LEILÃO R$%d" % winning_bid)
+				_broadcast_tile_pulse(tile_idx, board_view.get_player_color(winner_id), "LEILÃO P$%d" % winning_bid)
 		else:
 			_log_both("Leilão encerrado sem arremate válido para %s." % tile_name)
 	else:
@@ -3692,6 +3966,11 @@ func _build_network_snapshot() -> Dictionary:
 		"current_player_index": current_player_index,
 		"current_state": int(current_state),
 		"current_round": current_round,
+		"game_rules_mode": _game_rules_mode,
+		"seasons_enabled": _seasons_enabled,
+		"current_season_index": _current_season_index,
+		"round_limit": _round_limit,
+		"net_worth_goal": _net_worth_goal,
 		"has_extra_roll": _has_extra_roll,
 		"last_dice_sum": _last_dice_sum,
 		"last_tile_summary": _last_tile_summary,
@@ -3740,6 +4019,11 @@ func _apply_network_snapshot(snapshot: Dictionary, is_initial_start: bool) -> vo
 	current_player_index = clampi(int(snapshot.get("current_player_index", 0)), 0, maxi(0, players.size() - 1))
 	current_state = int(snapshot.get("current_state", int(TurnState.WAITING_ROLL))) as TurnState
 	current_round = maxi(1, int(snapshot.get("current_round", 1)))
+	_game_rules_mode = str(snapshot.get("game_rules_mode", "classic"))
+	_seasons_enabled = bool(snapshot.get("seasons_enabled", false))
+	_current_season_index = posmod(int(snapshot.get("current_season_index", 0)), SEASON_ORDER.size())
+	_round_limit = int(snapshot.get("round_limit", 0))
+	_net_worth_goal = int(snapshot.get("net_worth_goal", 0))
 	_has_extra_roll = bool(snapshot.get("has_extra_roll", false))
 	_last_dice_sum = int(snapshot.get("last_dice_sum", 0))
 	_last_tile_summary = str(snapshot.get("last_tile_summary", ""))

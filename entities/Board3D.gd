@@ -906,10 +906,10 @@ func _create_tile_3d(tile_idx: int, rect_xz: Rect2, tile_data: Dictionary) -> No
 	if has_price_line:
 		var price_lbl: Label3D = Label3D.new()
 		if tile_type == "TAX":
-			price_lbl.text = "-R$%d" % int(tile_data.get("amount", 0))
+			price_lbl.text = "-P$%d" % int(tile_data.get("amount", 0))
 			price_lbl.modulate = Color("#FF7B7B")
 		else:
-			price_lbl.text = "R$%d" % int(tile_data.get("price", 0))
+			price_lbl.text = "P$%d" % int(tile_data.get("price", 0))
 			price_lbl.modulate = Color("#F8D568")
 		if _bold_font != null:
 			price_lbl.font = _bold_font
@@ -1519,7 +1519,7 @@ func _refresh_tile_value_labels(mono_tiles_opt: Dictionary[int, bool] = {}) -> v
 
 		var base_fs: int = _tile_base_font_sizes.get(tile_idx, 36)
 		if not _owners_cache.has(tile_idx):
-			lbl.text = "R$%d" % int(tile.get("price", 0))
+			lbl.text = "P$%d" % int(tile.get("price", 0))
 			lbl.font_size = base_fs
 			lbl.modulate = Color("#F8D568")
 		elif _mortgaged_cache.get(tile_idx, false):
@@ -1537,7 +1537,7 @@ func _refresh_tile_value_labels(mono_tiles_opt: Dictionary[int, bool] = {}) -> v
 			var is_mono: bool = mono_tiles.get(tile_idx, false)
 			if b_lvl == 0 and is_mono:
 				rent_val *= 2
-			lbl.text = "Al.R$%d" % rent_val
+			lbl.text = "Al.P$%d" % rent_val
 			lbl.font_size = maxi(26, base_fs - 5)
 			if b_lvl >= 5 or is_mono:
 				lbl.modulate = Color("#FFD166")
