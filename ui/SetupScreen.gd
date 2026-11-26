@@ -10,6 +10,9 @@ signal join_web_room_requested(signaling_url: String, room_code: String, player_
 signal disconnect_network_requested
 signal lobby_config_changed
 
+const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
+const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
+
 const MAX_PLAYERS: int = 6
 const MIN_PLAYERS: int = 2
 const MODE_TAB_LOCAL: int = 0
@@ -43,6 +46,7 @@ const COLOR_OPTIONS: Array[Dictionary] = [
 	{ "name": "Terracota", "hex": "#FF7A38" }
 ]
 
+var _profile_adapter: RefCounted = null
 var _is_touch_mode: bool = false
 var _bold_font: SystemFont = null
 var _pawn_textures: Dictionary[String, Texture2D] = {}
@@ -106,12 +110,19 @@ var _web_status_label: Label
 var _btn_start: Button
 var _quick_buttons: Array[Button] = []
 
+func _resolve_platform_profile() -> RefCounted:
+	return PlatformProfileAdapter.create_for_mobile_flag(PlatformProfileAdapter.resolve_is_mobile(get_tree()))
+
+func get_ui_profile_id() -> String:
+	if _profile_adapter != null:
+		return str(_profile_adapter.get("profile_name"))
+	return "android" if _is_touch_mode else "desktop"
+
 func _ready() -> void:
 	layer = 10
-	_is_touch_mode = OS.has_feature("mobile") or OS.has_feature("android") or DisplayServer.is_touchscreen_available()
-	_bold_font = SystemFont.new()
-	_bold_font.font_names = PackedStringArray(["Segoe UI", "Roboto", "Arial", "Liberation Sans", "sans-serif"])
-	_bold_font.font_weight = 700
+	_profile_adapter = _resolve_platform_profile()
+	_is_touch_mode = bool(_profile_adapter.get("is_mobile")) if _profile_adapter != null else false
+	_bold_font = UIStyleTokens.create_bold_font()
 	_preload_pawn_textures()
 	_build_ui()
 	_refresh_count_buttons()
@@ -823,7 +834,10 @@ func _on_viewport_size_changed() -> void:
 	var target_h: float = clampf(vp_size.y - 56.0, 620.0, 940.0)
 	_main_card.custom_minimum_size = Vector2(target_w, target_h)
 	if _cards_grid != null:
-		_cards_grid.columns = 1 if vp_size.x < 1080.0 else 2
+		if _profile_adapter != null:
+			_cards_grid.columns = int(_profile_adapter.call("compute_setup_columns", vp_size.x))
+		else:
+			_cards_grid.columns = 1 if vp_size.x < 1080.0 else 2
 
 func _set_player_count(new_count: int) -> void:
 	if _net_mode == 2:

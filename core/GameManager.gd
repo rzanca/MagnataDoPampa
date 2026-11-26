@@ -2,9 +2,19 @@ extends Node
 
 enum TurnState { WAITING_ROLL, MOVING, EVALUATING, MANAGEMENT, GAME_OVER }
 
+signal turn_state_changed(state: int, player_id: int, round_number: int)
+signal hud_state_synced(snapshot: Dictionary)
+signal property_purchased(player_id: int, tile_index: int, price: int)
+signal match_event_logged(message: String)
+signal match_finished(victory_info: Dictionary)
+
 const Board3DClass = preload("res://entities/Board3D.gd")
 const GameHUDClass = preload("res://ui/GameHUD.gd")
 const SetupScreenClass = preload("res://ui/SetupScreen.gd")
+const DesktopGameHUDClass = preload("res://ui/desktop/DesktopGameHUD.gd")
+const AndroidGameHUDClass = preload("res://ui/android/AndroidGameHUD.gd")
+const DesktopSetupScreenClass = preload("res://ui/desktop/DesktopSetupScreen.gd")
+const AndroidSetupScreenClass = preload("res://ui/android/AndroidSetupScreen.gd")
 const BotAIClass = preload("res://core/BotAI.gd")
 const NetworkManagerClass = preload("res://core/NetworkManager.gd")
 
@@ -212,6 +222,14 @@ func _reset_chance_deck() -> void:
 		chance_cards.append(card.duplicate(true))
 	chance_cards.shuffle()
 
+func _is_mobile_platform_active() -> bool:
+	var tree: SceneTree = get_tree()
+	if tree != null and tree.root != null:
+		var platform_cfg: Node = tree.root.get_node_or_null("PlatformConfig")
+		if platform_cfg != null and platform_cfg.has_method("is_mobile_ui_active"):
+			return bool(platform_cfg.call("is_mobile_ui_active"))
+	return OS.get_name() == "Android"
+
 func _setup_visuals() -> void:
 	board_view = Board3DClass.new()
 	board_view.name = "Board3D"
@@ -219,9 +237,15 @@ func _setup_visuals() -> void:
 	board_view.build_board(tiles)
 	board_view.tile_clicked.connect(_on_tile_inspected)
 
-	hud = GameHUDClass.new()
-	hud.name = "GameHUD"
+	var use_mobile_ui: bool = _is_mobile_platform_active()
+	if use_mobile_ui:
+		hud = AndroidGameHUDClass.new()
+		hud.name = "AndroidGameHUD"
+	else:
+		hud = DesktopGameHUDClass.new()
+		hud.name = "DesktopGameHUD"
 	add_child(hud)
+	hud.bind_core_signals(self)
 	hud.set_camera_mode_label(board_view.is_2d_camera_active())
 	hud.roll_pressed.connect(_on_human_roll_pressed)
 	hud.buy_pressed.connect(_on_human_buy_pressed)
@@ -264,8 +288,12 @@ func _setup_visuals() -> void:
 	network.remote_state_received.connect(_on_network_remote_state_received)
 	network.remote_event_received.connect(_on_network_remote_event_received)
 
-	setup_screen = SetupScreenClass.new()
-	setup_screen.name = "SetupScreen"
+	if use_mobile_ui:
+		setup_screen = AndroidSetupScreenClass.new()
+		setup_screen.name = "AndroidSetupScreen"
+	else:
+		setup_screen = DesktopSetupScreenClass.new()
+		setup_screen.name = "DesktopSetupScreen"
 	add_child(setup_screen)
 	setup_screen.start_match_requested.connect(start_match_from_setup)
 	setup_screen.help_requested.connect(_on_help_requested)
@@ -796,6 +824,7 @@ func _log_both(msg: String) -> void:
 	print(msg)
 	if hud != null:
 		hud.push_log(msg)
+	match_event_logged.emit(msg)
 	if _is_network_host() and _match_active and not _applying_remote_state:
 		network.broadcast_match_event(_active_net_session_id, "LOG", { "msg": msg })
 
@@ -1346,6 +1375,18 @@ func _sync_hud() -> void:
 		can_trade,
 		can_end
 	)
+	var active_player_id: int = int(player.get("id", -1))
+	turn_state_changed.emit(int(current_state), active_player_id, current_round)
+	hud_state_synced.emit({
+		"state": int(current_state),
+		"state_label": _state_label(),
+		"current_player_index": current_player_index,
+		"current_player_id": active_player_id,
+		"current_round": current_round,
+		"bank_houses_left": bank_houses_left,
+		"bank_hotels_left": bank_hotels_left,
+		"match_active": _match_active
+	})
 	_broadcast_state_if_host()
 
 func _maybe_start_bot_turn() -> void:
@@ -2187,6 +2228,7 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 			}
 			_last_victory_info = victory_info.duplicate(true)
 			hud.show_victory_modal(victory_info)
+			match_finished.emit(victory_info.duplicate(true))
 			_broadcast_state_if_host()
 
 func buy_current_property() -> void:
@@ -2204,6 +2246,7 @@ func buy_current_property() -> void:
 	_selected_property_tile = pos
 	_last_tile_summary = "%s comprou %s por R$ %d!" % [str(player["name"]), str(tile["name"]), price]
 	_log_both(_last_tile_summary)
+	property_purchased.emit(int(player["id"]), pos, price)
 	if board_view != null:
 		board_view.update_ownership(property_owners, mortgaged_tiles)
 		_broadcast_tile_pulse(pos, board_view.get_player_color(int(player["id"])), "COMPRADO! -R$ %d" % price)

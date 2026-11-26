@@ -20,7 +20,7 @@
       "id": "TASK-03",
       "title": "Criar base de UI dedicada em ui/desktop/ e ui/android/ com componentes em ui/shared/",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "pending",
+      "status": "done",
       "notes": "Conectar aos sinais do núcleo e respeitar PlatformConfig.is_mobile_ui_active()."
     },
     {

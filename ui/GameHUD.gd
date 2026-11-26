@@ -22,13 +22,17 @@ signal board_layout_updated(board_rect: Rect2)
 signal settings_updated(settings_data: Dictionary)
 signal chance_card_dismissed
 
-const STATUS_BG_DEFAULT: Color = Color("#15251D")
-const STATUS_BORDER_DEFAULT: Color = Color("#D4AF37")
+const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
+const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
+
+const STATUS_BG_DEFAULT: Color = Color(UIStyleTokens.BG_STATUS_DEFAULT)
+const STATUS_BORDER_DEFAULT: Color = Color(UIStyleTokens.BORDER_GOLD)
 
 const TAB_PLAYERS: int = 0
 const TAB_DEEDS: int = 1
 const TAB_LOG: int = 2
 
+var _profile_adapter: RefCounted = null
 var _is_touch_mode: bool = false
 var _bold_font: SystemFont = null
 var _pawn_textures: Dictionary[String, Texture2D] = {}
@@ -213,12 +217,30 @@ var _cached_is_2d_cam: bool = false
 var _last_board_rect: Rect2 = Rect2(18.0, 18.0, 1418.0, 1044.0)
 var _last_layout_vp_size: Vector2 = Vector2.ZERO
 
+func _resolve_platform_profile() -> RefCounted:
+	return PlatformProfileAdapter.create_for_mobile_flag(PlatformProfileAdapter.resolve_is_mobile(get_tree()))
+
+func get_ui_profile_id() -> String:
+	if _profile_adapter != null:
+		return str(_profile_adapter.get("profile_name"))
+	return "android" if _is_touch_mode else "desktop"
+
+func bind_core_signals(core_manager: Node) -> void:
+	if core_manager == null or not core_manager.has_signal("turn_state_changed"):
+		return
+	var cb: Callable = Callable(self, "_on_base_core_turn_state_changed")
+	if not core_manager.is_connected("turn_state_changed", cb):
+		core_manager.connect("turn_state_changed", cb)
+
+func _on_base_core_turn_state_changed(_state: int, _player_id: int, round_number: int) -> void:
+	if _round_label != null and round_number >= 1:
+		_round_label.text = "Rodada %d" % round_number
+
 func _ready() -> void:
 	layer = 2
-	_is_touch_mode = OS.has_feature("mobile") or OS.has_feature("android") or DisplayServer.is_touchscreen_available()
-	_bold_font = SystemFont.new()
-	_bold_font.font_names = PackedStringArray(["Segoe UI", "Roboto", "Arial", "Liberation Sans", "sans-serif"])
-	_bold_font.font_weight = 700
+	_profile_adapter = _resolve_platform_profile()
+	_is_touch_mode = bool(_profile_adapter.get("is_mobile")) if _profile_adapter != null else false
+	_bold_font = UIStyleTokens.create_bold_font()
 	_preload_pawn_textures()
 	_build_ui()
 	_build_modals()
@@ -231,11 +253,11 @@ func _ready() -> void:
 	call_deferred("_update_responsive_layout")
 
 func _fs(base_px: float) -> int:
-	var mult: float = 1.22 if _is_touch_mode else 1.0
+	var mult: float = float(_profile_adapter.get("font_scale")) if _profile_adapter != null else (1.22 if _is_touch_mode else 1.0)
 	return roundi(base_px * mult)
 
 func _bh(base_h: float) -> float:
-	var mult: float = 1.28 if _is_touch_mode else 1.0
+	var mult: float = float(_profile_adapter.get("button_height_scale")) if _profile_adapter != null else (1.28 if _is_touch_mode else 1.0)
 	return base_h * mult
 
 func _preload_pawn_textures() -> void:
@@ -296,16 +318,7 @@ func _try_load_deed_art(art_id: String) -> Texture2D:
 	return null
 
 func _format_brl(amount: int) -> String:
-	var sign_str: String = "-" if amount < 0 else ""
-	var digits: String = str(absi(amount))
-	var out: String = ""
-	var count: int = 0
-	for idx: int in range(digits.length() - 1, -1, -1):
-		if count > 0 and count % 3 == 0:
-			out = "." + out
-		out = digits.substr(idx, 1) + out
-		count += 1
-	return "%sR$ %s" % [sign_str, out]
+	return UIStyleTokens.format_brl(amount)
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey:
@@ -382,14 +395,9 @@ func _update_responsive_layout() -> void:
 		return
 	_last_layout_vp_size = vp_size
 
-	var pad: float = 14.0 if _is_touch_mode else 18.0
-	var gap: float = 14.0 if _is_touch_mode else 16.0
-	var panel_w: float = 468.0
-	if _is_touch_mode:
-		panel_w = clampf(vp_size.x * 0.275, 490.0, 610.0)
-	else:
-		panel_w = clampf(vp_size.x * 0.245, 430.0, 520.0)
-	panel_w = minf(panel_w, maxf(300.0, vp_size.x * 0.42))
+	var pad: float = float(_profile_adapter.get("viewport_padding")) if _profile_adapter != null else (14.0 if _is_touch_mode else 18.0)
+	var gap: float = float(_profile_adapter.get("panel_gap")) if _profile_adapter != null else (14.0 if _is_touch_mode else 16.0)
+	var panel_w: float = float(_profile_adapter.call("compute_side_panel_width", vp_size.x)) if _profile_adapter != null else clampf(vp_size.x * 0.245, 430.0, 520.0)
 
 	var usable_h: float = maxf(300.0, vp_size.y - pad * 2.0)
 	var board_w: float = maxf(360.0, vp_size.x - pad * 2.0 - gap - panel_w)
@@ -449,24 +457,10 @@ func _layout_event_toast() -> void:
 # --- Estilos Modernos ---
 
 func _make_panel_style(bg_hex: String = "#111A15", border_hex: String = "#C9A227", radius: int = 12, border_w: int = 2) -> StyleBoxFlat:
-	var sb: StyleBoxFlat = StyleBoxFlat.new()
-	sb.bg_color = Color(bg_hex)
-	sb.border_color = Color(border_hex)
-	sb.set_border_width_all(border_w)
-	sb.set_corner_radius_all(radius)
-	return sb
+	return UIStyleTokens.make_panel_style(bg_hex, border_hex, radius, border_w)
 
 func _make_btn_style(bg_hex: String, border_hex: String, border_w: int = 1, radius: int = 9, pressed_shift: bool = false, pad_h: float = 10.0) -> StyleBoxFlat:
-	var sb: StyleBoxFlat = StyleBoxFlat.new()
-	sb.bg_color = Color(bg_hex)
-	sb.border_color = Color(border_hex)
-	sb.set_border_width_all(border_w)
-	sb.set_corner_radius_all(radius)
-	sb.content_margin_left = pad_h
-	sb.content_margin_right = pad_h
-	sb.content_margin_top = 6.0 if pressed_shift else 5.0
-	sb.content_margin_bottom = 4.0 if pressed_shift else 5.0
-	return sb
+	return UIStyleTokens.make_button_style(bg_hex, border_hex, border_w, radius, pressed_shift, pad_h)
 
 func _apply_button_theme(
 	btn: Button,
