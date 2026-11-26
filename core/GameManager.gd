@@ -595,13 +595,9 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	if not players.is_empty():
 		_log_both("Vez de %s, tchê!" % str(players[0]["name"]))
 
-func _on_tile_inspected(tile_idx: int) -> void:
-	if not _match_active or hud == null:
-		return
-	if tile_idx < 0 or tile_idx >= tiles.size():
-		return
-
+func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 	var tile: Dictionary = tiles[tile_idx]
+	var tile_type: String = str(tile.get("type", ""))
 	var is_owned: bool = property_owners.has(tile_idx)
 	var owner_id: int = property_owners.get(tile_idx, -1)
 	var owner: Dictionary = _get_player_by_id(owner_id) if is_owned else {}
@@ -612,25 +608,50 @@ func _on_tile_inspected(tile_idx: int) -> void:
 	var has_monopoly: bool = is_owned and _has_monopoly(owner_id, group_name)
 
 	var active_pid: int = int(players[current_player_index].get("id", -1)) if (not players.is_empty() and current_player_index >= 0 and current_player_index < players.size()) else -1
+	var human_can_act: bool = (active_pid >= 0) and (not _is_human_input_blocked()) and (not _is_auction_active())
+	var is_owner_active: bool = is_owned and (owner_id == active_pid) and human_can_act
 	var can_trade_this_tile: bool = (
 		is_owned
-		and not _is_auction_active()
+		and owner_id != active_pid
+		and human_can_act
 		and _can_open_trade()
 		and not _group_has_buildings(tile_idx)
-		and active_pid >= 0
-		and owner_id != active_pid
-		and not _is_human_input_blocked()
+	)
+	var can_offer_in_trade: bool = (
+		is_owner_active
+		and _can_open_trade()
+		and not _group_has_buildings(tile_idx)
 	)
 	var can_cart_this_tile: bool = (
-		is_owned
-		and not _is_auction_active()
-		and str(tile.get("type", "")) == "PROPERTY"
+		is_owner_active
+		and tile_type == "PROPERTY"
 		and has_monopoly
-		and active_pid >= 0
-		and owner_id == active_pid
-		and not _is_human_input_blocked()
 	)
-	var info: Dictionary = {
+
+	var can_build: bool = is_owner_active and _can_build_on(active_pid, tile_idx)
+	var build_label: String = "+Casa"
+	if tile_type == "PROPERTY":
+		var h_cost: int = int(tile.get("house_cost", 50))
+		var cur_lvl: int = property_buildings.get(tile_idx, 0)
+		build_label = "+Hotel (R$ %d)" % h_cost if cur_lvl == 4 else "+Casa (R$ %d)" % h_cost
+
+	var can_sell: bool = is_owner_active and _can_sell_building_on(active_pid, tile_idx)
+	var sell_label: String = "-Casa"
+	var cur_lvl_s: int = property_buildings.get(tile_idx, 0)
+	var refund_unit: int = _get_building_sell_value(tile)
+	if cur_lvl_s >= 5:
+		sell_label = "Vender Hotel (+R$ %d)" % refund_unit
+	elif cur_lvl_s > 0:
+		sell_label = "Vender Casa (+R$ %d)" % refund_unit
+
+	var can_mortgage: bool = is_owner_active and _can_toggle_mortgage(active_pid, tile_idx)
+	var mortgage_label: String = "Hipotecar"
+	if mortgaged_tiles.get(tile_idx, false):
+		mortgage_label = "Desipotecar (-R$ %d)" % _get_redeem_cost(tile)
+	elif tile_type == "PROPERTY" or tile_type == "COMPANY":
+		mortgage_label = "Hipotecar (+R$ %d)" % _get_mortgage_value(tile)
+
+	return {
 		"tile_index": tile_idx,
 		"tile": tile,
 		"mortgage_value": _get_mortgage_value(tile),
@@ -643,10 +664,24 @@ func _on_tile_inspected(tile_idx: int) -> void:
 		"is_mortgaged": mortgaged_tiles.get(tile_idx, false),
 		"building_level": property_buildings.get(tile_idx, 0),
 		"has_monopoly": has_monopoly,
+		"is_owner_active": is_owner_active,
+		"can_build": can_build,
+		"build_label": build_label,
+		"can_sell_building": can_sell,
+		"sell_building_label": sell_label,
+		"can_mortgage": can_mortgage,
+		"mortgage_label": mortgage_label,
+		"can_offer_in_trade": can_offer_in_trade,
 		"can_propose_trade": can_trade_this_tile,
 		"can_open_build_cart": can_cart_this_tile
 	}
-	hud.show_deed_modal(info)
+
+func _on_tile_inspected(tile_idx: int) -> void:
+	if not _match_active or hud == null:
+		return
+	if tile_idx < 0 or tile_idx >= tiles.size():
+		return
+	hud.show_deed_modal(_build_deed_inspection_info(tile_idx))
 
 func _on_player_inspected(player_id: int) -> void:
 	if not _match_active or hud == null:
@@ -1094,7 +1129,7 @@ func _has_liquidatable_assets(player_id: int) -> bool:
 	return false
 
 func _can_end_turn() -> bool:
-	if not _match_active or _is_animating or players.is_empty():
+	if not _match_active or _is_animating or _is_auction_active() or players.is_empty():
 		return false
 	if current_state == TurnState.GAME_OVER:
 		return false
@@ -1181,7 +1216,7 @@ func _group_has_buildings(tile_idx: int) -> bool:
 	return false
 
 func _can_build_on(player_id: int, tile_idx: int) -> bool:
-	if not _match_active or _is_animating or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+	if not _match_active or _is_animating or _is_auction_active() or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
 		return false
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return false
@@ -1224,7 +1259,7 @@ func _can_build_on(player_id: int, tile_idx: int) -> bool:
 	return int(player["money"]) >= house_cost
 
 func _can_sell_building_on(player_id: int, tile_idx: int) -> bool:
-	if not _match_active or _is_animating or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+	if not _match_active or _is_animating or _is_auction_active() or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
 		return false
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return false
@@ -1251,7 +1286,7 @@ func _can_sell_building_on(player_id: int, tile_idx: int) -> bool:
 	return true
 
 func _can_toggle_mortgage(player_id: int, tile_idx: int) -> bool:
-	if not _match_active or _is_animating or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+	if not _match_active or _is_animating or _is_auction_active() or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
 		return false
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return false
@@ -1524,6 +1559,10 @@ func _sync_hud() -> void:
 		"bank_hotels_left": bank_hotels_left,
 		"match_active": _match_active
 	})
+	if _match_active and not players.is_empty() and hud.has_method("get_open_deed_tile_index"):
+		var open_deed_idx: int = int(hud.call("get_open_deed_tile_index"))
+		if open_deed_idx >= 0 and open_deed_idx < tiles.size():
+			hud.show_deed_modal(_build_deed_inspection_info(open_deed_idx))
 	_broadcast_state_if_host()
 
 func _maybe_start_bot_turn() -> void:
@@ -1562,6 +1601,7 @@ func _run_bot_turn(expected_token: int) -> void:
 	while (
 		_match_active
 		and expected_token == _bot_turn_token
+		and not _is_auction_active()
 		and current_state != TurnState.GAME_OVER
 		and _is_current_player_bot()
 		and actions_taken < BOT_MAX_ACTIONS_PER_TURN
@@ -1681,7 +1721,10 @@ func _run_bot_turn(expected_token: int) -> void:
 		break
 
 	if _match_active and expected_token == _bot_turn_token and current_state != TurnState.GAME_OVER and _is_current_player_bot_owner():
-		if _is_current_player_bankrupt():
+		if _is_auction_active():
+			_is_bot_thinking = false
+			_sync_hud()
+		elif _is_current_player_bankrupt():
 			_is_animating = false
 			current_state = TurnState.MANAGEMENT
 			end_turn()
@@ -2203,11 +2246,58 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 		"GO_TO_JAIL":
 			_last_tile_summary = "Deu ruim! Mandaram pro Xadrez!"
 			send_to_jail(player)
+		"FREE_PARKING":
+			_trigger_20_setembro_event(player, pos)
 		"CHANCE":
 			await _draw_chance_card(player)
 		_:
 			_last_tile_summary = "Casa: %s" % str(tile["name"])
 			current_state = TurnState.MANAGEMENT
+
+func _trigger_20_setembro_event(player: Dictionary, pos: int) -> void:
+	# Evento temático Feriadão de 20 de Setembro (Opção A - Festa Farroupilha equilibrada no Modo Clássico):
+	# 1. Havendo lote livre e quórum (>=2 solventes), convoca Acampamento de Remates (Leilão Farroupilha) imediato.
+	# 2. Caso contrário, promove o Rateio de Chimarrão no Galpão (+R$ 20 por adversário solvente, soma zero).
+	var p_name: String = str(player.get("name", "Estanceiro"))
+	if board_view != null:
+		_broadcast_tile_pulse(pos, Color("#22C55E"), "20 DE SETEMBRO!")
+	current_state = TurnState.MANAGEMENT
+
+	var auc_tile: int = _pick_periodic_auction_tile()
+	if auc_tile >= 0 and start_periodic_land_auction(auc_tile):
+		var auc_name: String = str(tiles[auc_tile].get("name", "Terreno"))
+		_last_tile_summary = "20 de Setembro! %s convocou Leilão Farroupilha por %s!" % [p_name, auc_name]
+		_log_both("Festa de 20 de Setembro! %s abriu o Acampamento de Remates para leiloar %s!" % [p_name, auc_name])
+		_broadcast_toast_event("Feriadão de 20 de Setembro!", "%s convocou Leilão Farroupilha por %s!" % [p_name, auc_name], "chance")
+		return
+
+	var payer_contrib: int = 20
+	var active_pid: int = int(player.get("id", -1))
+	var collected_total: int = 0
+	var contributors_count: int = 0
+	for other: Dictionary in players:
+		if int(other.get("id", -1)) == active_pid or bool(other.get("bankrupt", false)):
+			continue
+		if int(other.get("money", 0)) >= payer_contrib:
+			other["money"] = int(other["money"]) - payer_contrib
+			player["money"] = int(player["money"]) + payer_contrib
+			collected_total += payer_contrib
+			contributors_count += 1
+
+	if collected_total > 0:
+		if int(player.get("money", 0)) >= 0:
+			_last_creditor_id = -1
+		_last_tile_summary = "20 de Setembro! Rateio de Chimarrão rendeu +R$ %d para %s!" % [collected_total, p_name]
+		_log_both("Festa de 20 de Setembro! Rateio de Chimarrão no Galpão: %d estanceiro(s) contribuíram com R$ %d cada (+R$ %d para %s)." % [contributors_count, payer_contrib, collected_total, p_name])
+		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Rateio de Chimarrão no Galpão: %s recebeu +R$ %d!" % [p_name, collected_total], "chance")
+	else:
+		var bank_gift: int = 50
+		player["money"] = int(player["money"]) + bank_gift
+		if int(player.get("money", 0)) >= 0:
+			_last_creditor_id = -1
+		_last_tile_summary = "20 de Setembro! %s recebeu pró-labore farroupilha de +R$ %d!" % [p_name, bank_gift]
+		_log_both("Festa de 20 de Setembro! Sem lotes para leilão nem rateio — %s recebeu +R$ %d da Semana Farroupilha." % [p_name, bank_gift])
+		_broadcast_toast_event("Feriadão de 20 de Setembro!", "Semana Farroupilha: %s ganhou +R$ %d." % [p_name, bank_gift], "chance")
 
 func _describe_chance_card_effect(card: Dictionary) -> Dictionary:
 	var ctype: String = str(card.get("type", ""))

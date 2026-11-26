@@ -57,6 +57,13 @@
       "owner_agent": "01_arquiteto_hibrido.md",
       "status": "done",
       "notes": "Limpeza total ao voltar ao Setup, desabilitar peões/cores já escolhidos em tempo real no P2P, prompt remoto de troca e acompanhamento da câmera nos clientes."
+    },
+    {
+      "id": "LOTE-05",
+      "title": "Gestão centralizada na Carta do Lote e Evento Feriadão de 20 de Setembro (Opção A)",
+      "owner_agent": "00_product_manager.md",
+      "status": "done",
+      "notes": "Remover aba separada Escrituras mantendo atalho Minhas Escrituras/Quitar Dívida -> Carteira -> Carta do Lote com hipoteca, construções, carrinho e troca; implementar Leilão Farroupilha ou Rateio de Chimarrão ao parar na casa 20."
     }
   ]
 }

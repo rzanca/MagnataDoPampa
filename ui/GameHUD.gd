@@ -35,8 +35,7 @@ const STATUS_BG_DEFAULT: Color = Color(UIStyleTokens.BG_STATUS_DEFAULT)
 const STATUS_BORDER_DEFAULT: Color = Color(UIStyleTokens.BORDER_GOLD)
 
 const TAB_PLAYERS: int = 0
-const TAB_DEEDS: int = 1
-const TAB_LOG: int = 2
+const TAB_LOG: int = 1
 
 var _profile_adapter: RefCounted = null
 var _is_touch_mode: bool = false
@@ -81,7 +80,7 @@ var _round_label: Label
 var _bank_label: Label
 var _tile_info_label: Label
 
-# Abas centrais (Estanceiros | Escrituras | Diário)
+# Abas centrais (Estanceiros | Diário)
 var _active_tab: int = TAB_PLAYERS
 var _tab_buttons: Array[Button] = []
 var _tab_panels: Array[Control] = []
@@ -90,16 +89,9 @@ var _ticker_panel: PanelContainer
 var _ticker_scroll: ScrollContainer
 var _ticker_hdr_label: Label
 var _ticker_label: Label
-var _deeds_list_box: VBoxContainer
-var _deeds_empty_label: Label
-var _deeds_action_box: VBoxContainer
-var _btn_build: Button
-var _btn_sell_building: Button
-var _btn_mortgage: Button
-var _btn_inspect_selected: Button
-var _btn_open_cart: Button
 var _log_label: Label
 var _log_scroll: ScrollContainer
+var _cached_active_pid: int = -1
 
 # Dock Contextual Inferior
 var _dock_card: PanelContainer
@@ -120,12 +112,20 @@ var _btn_deeds_jump: Button
 
 # Modais dedicados (layer 20)
 var _deed_overlay: Control
+var _deed_card: PanelContainer
+var _deed_scroll: ScrollContainer
 var _deed_banner: PanelContainer
 var _deed_title_label: Label
 var _deed_group_label: Label
 var _deed_body_box: VBoxContainer
+var _deed_actions_grid: GridContainer
+var _deed_build_btn: Button
+var _deed_sell_btn: Button
+var _deed_mortgage_btn: Button
+var _deed_offer_trade_btn: Button
 var _deed_trade_btn: Button
 var _deed_cart_btn: Button
+var _deed_open_tile_idx: int = -1
 var _deed_trade_target_id: int = -1
 var _deed_trade_tile_idx: int = -1
 var _deed_cart_group: String = ""
@@ -223,6 +223,7 @@ var _portfolio_monopoly_wrap: VBoxContainer
 var _portfolio_monopoly_box: HFlowContainer
 var _portfolio_list_box: VBoxContainer
 var _portfolio_empty_label: Label
+var _portfolio_cart_btn: Button
 
 var _settings_overlay: Control
 var _settings_target_row: HBoxContainer
@@ -496,6 +497,12 @@ func _update_responsive_layout() -> void:
 	if _cart_scroll != null:
 		var cart_scroll_h: float = clampf(vp_size.y * 0.50, 240.0, 520.0)
 		_cart_scroll.custom_minimum_size = Vector2(0.0, cart_scroll_h)
+	if _deed_card != null:
+		var deed_w: float = clampf(vp_size.x * 0.36, 480.0, 580.0) if not _is_touch_mode else clampf(vp_size.x * 0.72, 520.0, 720.0)
+		_deed_card.custom_minimum_size = Vector2(minf(deed_w, vp_size.x - 40.0), 0.0)
+	if _deed_scroll != null:
+		var deed_scroll_h: float = clampf(vp_size.y * 0.44, 210.0, 440.0)
+		_deed_scroll.custom_minimum_size = Vector2(0.0, deed_scroll_h)
 
 	if _board_quick_bar != null:
 		_board_quick_bar.position = Vector2(pad + 14.0, pad + 14.0)
@@ -911,12 +918,12 @@ func _build_hero_zone(parent: VBoxContainer) -> void:
 	tile_box.add_child(_tile_info_label)
 
 func _build_tabs_zone(parent: VBoxContainer) -> void:
-	# Seletor segmentado de 3 abas
+	# Seletor segmentado de 2 abas (Estanceiros | Diário) — gestão de escrituras centralizada na Carta do Lote
 	var tabs_bar: HBoxContainer = HBoxContainer.new()
 	tabs_bar.add_theme_constant_override("separation", 6)
 	parent.add_child(tabs_bar)
 
-	var tab_titles: Array[String] = ["Estanceiros", "Escrituras", "Diário"]
+	var tab_titles: Array[String] = ["Estanceiros", "Diário"]
 	_tab_buttons.clear()
 	for i: int in range(tab_titles.size()):
 		var t_btn: Button = Button.new()
@@ -1007,91 +1014,7 @@ func _build_tabs_zone(parent: VBoxContainer) -> void:
 	_ticker_label.add_theme_color_override("font_color", Color("#D8E6DD"))
 	_ticker_scroll.add_child(_ticker_label)
 
-	# --- ABA 1: ESCRITURAS (GESTÃO VISUAL DE PROPRIEDADES) ---
-	var deeds_tab: VBoxContainer = VBoxContainer.new()
-	deeds_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	deeds_tab.add_theme_constant_override("separation", 8)
-	deeds_tab.visible = false
-	tab_frame.add_child(deeds_tab)
-	_tab_panels.append(deeds_tab)
-
-	var deeds_scroll: ScrollContainer = ScrollContainer.new()
-	deeds_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	deeds_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	deeds_scroll.custom_minimum_size = Vector2(0.0, 64.0)
-	deeds_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	deeds_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
-	deeds_tab.add_child(deeds_scroll)
-
-	var deeds_inner: VBoxContainer = VBoxContainer.new()
-	deeds_inner.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	deeds_inner.add_theme_constant_override("separation", 6)
-	deeds_scroll.add_child(deeds_inner)
-
-	_deeds_empty_label = Label.new()
-	_deeds_empty_label.text = "Nenhuma escritura própria ainda.\nCompre terrenos ou companhias ao parar em casas livres."
-	_deeds_empty_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_deeds_empty_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_deeds_empty_label.add_theme_font_size_override("font_size", _fs(13.0))
-	_deeds_empty_label.add_theme_color_override("font_color", Color("#8FA899"))
-	deeds_inner.add_child(_deeds_empty_label)
-
-	_deeds_list_box = VBoxContainer.new()
-	_deeds_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_deeds_list_box.add_theme_constant_override("separation", 6)
-	deeds_inner.add_child(_deeds_list_box)
-
-	_deeds_action_box = VBoxContainer.new()
-	_deeds_action_box.add_theme_constant_override("separation", 6)
-	deeds_tab.add_child(_deeds_action_box)
-
-	var d_row1: HBoxContainer = HBoxContainer.new()
-	d_row1.add_theme_constant_override("separation", 6)
-	_deeds_action_box.add_child(d_row1)
-
-	var act_h: float = _bh(38.0)
-	var act_fs: int = _fs(12.0)
-
-	_btn_build = Button.new()
-	_btn_build.text = "+Casa"
-	_btn_build.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_btn_build, "#1D4A38", "#27644C", "#143528", "#40916C", Color.WHITE, false, act_h, act_fs, 8.0, true)
-	_btn_build.pressed.connect(_on_build_pressed)
-	d_row1.add_child(_btn_build)
-
-	_btn_sell_building = Button.new()
-	_btn_sell_building.text = "-Casa"
-	_btn_sell_building.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_btn_sell_building, "#3D2724", "#553631", "#2B1B19", "#C46E5F", Color.WHITE, false, act_h, act_fs, 8.0, true)
-	_btn_sell_building.pressed.connect(_on_sell_building_pressed)
-	d_row1.add_child(_btn_sell_building)
-
-	var d_row2: HBoxContainer = HBoxContainer.new()
-	d_row2.add_theme_constant_override("separation", 6)
-	_deeds_action_box.add_child(d_row2)
-
-	_btn_mortgage = Button.new()
-	_btn_mortgage.text = "Hipotecar"
-	_btn_mortgage.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_btn_mortgage, "#2B323C", "#3B4553", "#1F242B", "#7B8C9E", Color.WHITE, false, act_h, act_fs, 8.0, true)
-	_btn_mortgage.pressed.connect(_on_mortgage_pressed)
-	d_row2.add_child(_btn_mortgage)
-
-	_btn_inspect_selected = Button.new()
-	_btn_inspect_selected.text = "Ver Escritura"
-	_btn_inspect_selected.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_btn_inspect_selected, "#1E3028", "#294338", "#15231D", "#C9A227", Color("#F8E5A8"), false, act_h, act_fs, 8.0, true)
-	_btn_inspect_selected.pressed.connect(_on_inspect_selected_pressed)
-	d_row2.add_child(_btn_inspect_selected)
-
-	_btn_open_cart = Button.new()
-	_btn_open_cart.text = "Carrinho de Obras (Monopólios)"
-	_btn_open_cart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_btn_open_cart, "#1B3D30", "#265443", "#132B22", "#52B788", Color("#D8FFE8"), false, act_h, act_fs, 10.0, true)
-	_btn_open_cart.pressed.connect(func() -> void: show_construction_cart_modal(""))
-	_deeds_action_box.add_child(_btn_open_cart)
-
-	# --- ABA 2: DIÁRIO COMPLETO DA RODADA ---
+	# --- ABA 1: DIÁRIO COMPLETO DA RODADA ---
 	var log_tab: VBoxContainer = VBoxContainer.new()
 	log_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	log_tab.visible = false
@@ -1234,10 +1157,13 @@ func _build_action_dock_zone(parent: VBoxContainer) -> void:
 	_secondary_action_row.add_child(_btn_trade_open)
 
 	_btn_deeds_jump = Button.new()
-	_btn_deeds_jump.text = "Escrituras (0)"
+	_btn_deeds_jump.text = "Minhas Escrituras (0)"
 	_btn_deeds_jump.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(_btn_deeds_jump, "#1B2E25", "#254033", "#13211A", "#52B788", Color("#E9F5EE"), false, sec_h, sec_fs, 10.0, true)
-	_btn_deeds_jump.pressed.connect(func() -> void: _switch_tab(TAB_DEEDS))
+	_btn_deeds_jump.pressed.connect(func() -> void:
+		if _cached_active_pid >= 0:
+			player_inspected.emit(_cached_active_pid)
+	)
 	_secondary_action_row.add_child(_btn_deeds_jump)
 
 func _switch_tab(tab_idx: int) -> void:
@@ -1291,7 +1217,7 @@ func _create_modal_backdrop(on_dismiss: Callable) -> Control:
 	overlay.add_child(dim)
 	return overlay
 
-# 1. Modal de Inspeção de Escritura
+# 1. Modal de Inspeção & Gestão Direta da Carta do Lote
 func _build_deed_modal() -> void:
 	_deed_overlay = _create_modal_backdrop(hide_deed_modal)
 
@@ -1300,17 +1226,17 @@ func _build_deed_modal() -> void:
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_deed_overlay.add_child(center)
 
-	var card: PanelContainer = PanelContainer.new()
-	card.custom_minimum_size = Vector2(560.0 if _is_touch_mode else 500.0, 0.0)
+	_deed_card = PanelContainer.new()
+	_deed_card.custom_minimum_size = Vector2(560.0 if _is_touch_mode else 510.0, 0.0)
 	var card_style: StyleBoxFlat = _make_panel_style("#141F19", "#D4AF37", 18, 2)
 	card_style.shadow_size = 24
 	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.60)
-	card.add_theme_stylebox_override("panel", card_style)
-	center.add_child(card)
+	_deed_card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(_deed_card)
 
 	var card_vbox: VBoxContainer = VBoxContainer.new()
 	card_vbox.add_theme_constant_override("separation", 0)
-	card.add_child(card_vbox)
+	_deed_card.add_child(card_vbox)
 
 	_deed_banner = PanelContainer.new()
 	var banner_style: StyleBoxFlat = StyleBoxFlat.new()
@@ -1321,10 +1247,10 @@ func _build_deed_modal() -> void:
 	card_vbox.add_child(_deed_banner)
 
 	var b_margin: MarginContainer = MarginContainer.new()
-	b_margin.add_theme_constant_override("margin_left", 24)
-	b_margin.add_theme_constant_override("margin_right", 24)
-	b_margin.add_theme_constant_override("margin_top", 16)
-	b_margin.add_theme_constant_override("margin_bottom", 14)
+	b_margin.add_theme_constant_override("margin_left", 22)
+	b_margin.add_theme_constant_override("margin_right", 22)
+	b_margin.add_theme_constant_override("margin_top", 14)
+	b_margin.add_theme_constant_override("margin_bottom", 12)
 	_deed_banner.add_child(b_margin)
 
 	var b_vbox: VBoxContainer = VBoxContainer.new()
@@ -1336,7 +1262,7 @@ func _build_deed_modal() -> void:
 	_deed_group_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if _bold_font != null:
 		_deed_group_label.add_theme_font_override("font", _bold_font)
-	_deed_group_label.add_theme_font_size_override("font_size", _fs(12.0))
+	_deed_group_label.add_theme_font_size_override("font_size", _fs(11.5))
 	b_vbox.add_child(_deed_group_label)
 
 	_deed_title_label = Label.new()
@@ -1345,67 +1271,133 @@ func _build_deed_modal() -> void:
 	_deed_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	if _bold_font != null:
 		_deed_title_label.add_theme_font_override("font", _bold_font)
-	_deed_title_label.add_theme_font_size_override("font_size", _fs(23.0))
+	_deed_title_label.add_theme_font_size_override("font_size", _fs(22.0))
 	b_vbox.add_child(_deed_title_label)
 
 	var body_margin: MarginContainer = MarginContainer.new()
-	body_margin.add_theme_constant_override("margin_left", 24)
-	body_margin.add_theme_constant_override("margin_right", 24)
-	body_margin.add_theme_constant_override("margin_top", 16)
-	body_margin.add_theme_constant_override("margin_bottom", 18)
+	body_margin.add_theme_constant_override("margin_left", 20)
+	body_margin.add_theme_constant_override("margin_right", 20)
+	body_margin.add_theme_constant_override("margin_top", 14)
+	body_margin.add_theme_constant_override("margin_bottom", 16)
 	card_vbox.add_child(body_margin)
 
 	var body_outer: VBoxContainer = VBoxContainer.new()
-	body_outer.add_theme_constant_override("separation", 14)
+	body_outer.add_theme_constant_override("separation", 12)
 	body_margin.add_child(body_outer)
 
+	_deed_scroll = ScrollContainer.new()
+	_deed_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deed_scroll.custom_minimum_size = Vector2(0.0, 310.0)
+	_deed_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_deed_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	body_outer.add_child(_deed_scroll)
+
 	_deed_body_box = VBoxContainer.new()
-	_deeds_spacing_init(_deed_body_box, 7)
-	body_outer.add_child(_deed_body_box)
+	_deed_body_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_deeds_spacing_init(_deed_body_box, 6)
+	_deed_scroll.add_child(_deed_body_box)
 
-	var deed_btns_row: HBoxContainer = HBoxContainer.new()
-	deed_btns_row.add_theme_constant_override("separation", 10)
-	body_outer.add_child(deed_btns_row)
+	var deed_act_h: float = _bh(40.0)
+	var deed_act_fs: int = _fs(12.5)
 
-	_deed_trade_btn = Button.new()
-	_deed_trade_btn.text = "Propor Troca por Este Lote"
-	_deed_trade_btn.visible = false
-	_deed_trade_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_deed_trade_btn, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), true, _bh(42.0), _fs(13.5), 10.0, true)
-	_deed_trade_btn.pressed.connect(func() -> void:
-		var t_id: int = _deed_trade_target_id
-		var t_idx: int = _deed_trade_tile_idx
-		hide_deed_modal()
-		if t_id >= 0 and t_idx >= 0:
-			show_trade_modal(t_id, t_idx)
+	_deed_actions_grid = GridContainer.new()
+	_deed_actions_grid.columns = 2
+	_deed_actions_grid.add_theme_constant_override("h_separation", 8)
+	_deed_actions_grid.add_theme_constant_override("v_separation", 8)
+	_deed_actions_grid.visible = false
+	body_outer.add_child(_deed_actions_grid)
+
+	_deed_build_btn = Button.new()
+	_deed_build_btn.text = "+Casa"
+	_deed_build_btn.visible = false
+	_deed_build_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_build_btn, "#1D4A38", "#27644C", "#143528", "#52B788", Color("#E8FFF2"), false, deed_act_h, deed_act_fs, 8.0, true)
+	_deed_build_btn.pressed.connect(func() -> void:
+		if _deed_open_tile_idx >= 0:
+			build_pressed.emit(_deed_open_tile_idx)
 	)
-	deed_btns_row.add_child(_deed_trade_btn)
+	_deed_actions_grid.add_child(_deed_build_btn)
+
+	_deed_sell_btn = Button.new()
+	_deed_sell_btn.text = "-Casa"
+	_deed_sell_btn.visible = false
+	_deed_sell_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_sell_btn, "#3D2724", "#553631", "#2B1B19", "#C46E5F", Color.WHITE, false, deed_act_h, deed_act_fs, 8.0, true)
+	_deed_sell_btn.pressed.connect(func() -> void:
+		if _deed_open_tile_idx >= 0:
+			sell_building_pressed.emit(_deed_open_tile_idx)
+	)
+	_deed_actions_grid.add_child(_deed_sell_btn)
+
+	_deed_mortgage_btn = Button.new()
+	_deed_mortgage_btn.text = "Hipotecar"
+	_deed_mortgage_btn.visible = false
+	_deed_mortgage_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_mortgage_btn, "#2B323C", "#3B4553", "#1F242B", "#8FA3B8", Color.WHITE, false, deed_act_h, deed_act_fs, 8.0, true)
+	_deed_mortgage_btn.pressed.connect(func() -> void:
+		if _deed_open_tile_idx >= 0:
+			mortgage_pressed.emit(_deed_open_tile_idx)
+	)
+	_deed_actions_grid.add_child(_deed_mortgage_btn)
 
 	_deed_cart_btn = Button.new()
-	_deed_cart_btn.text = "Obras no Monopólio (Carrinho)"
+	_deed_cart_btn.text = "Carrinho de Obras"
 	_deed_cart_btn.visible = false
 	_deed_cart_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_deed_cart_btn, "#1D4A38", "#27644C", "#143528", "#52B788", Color("#E4FFF2"), true, _bh(42.0), _fs(13.5), 10.0, true)
+	_apply_button_theme(_deed_cart_btn, "#1B3F31", "#265945", "#132E24", "#7BF1A8", Color("#E4FFF2"), true, deed_act_h, deed_act_fs, 8.0, true)
 	_deed_cart_btn.pressed.connect(func() -> void:
 		var fg: String = _deed_cart_group
 		hide_deed_modal()
 		show_construction_cart_modal(fg)
 	)
-	deed_btns_row.add_child(_deed_cart_btn)
+	_deed_actions_grid.add_child(_deed_cart_btn)
+
+	_deed_offer_trade_btn = Button.new()
+	_deed_offer_trade_btn.text = "Ofertar em Troca"
+	_deed_offer_trade_btn.visible = false
+	_deed_offer_trade_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_offer_trade_btn, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), false, deed_act_h, deed_act_fs, 8.0, true)
+	_deed_offer_trade_btn.pressed.connect(func() -> void:
+		var off_idx: int = _deed_open_tile_idx
+		hide_deed_modal()
+		if off_idx >= 0:
+			show_trade_modal(-1, -1, off_idx)
+	)
+	_deed_actions_grid.add_child(_deed_offer_trade_btn)
+
+	_deed_trade_btn = Button.new()
+	_deed_trade_btn.text = "Propor Troca por Este Lote"
+	_deed_trade_btn.visible = false
+	_deed_trade_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_trade_btn, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), true, deed_act_h, deed_act_fs, 10.0, true)
+	_deed_trade_btn.pressed.connect(func() -> void:
+		var t_id: int = _deed_trade_target_id
+		var t_idx: int = _deed_trade_tile_idx
+		hide_deed_modal()
+		if t_id >= 0 and t_idx >= 0:
+			show_trade_modal(t_id, t_idx, -1)
+	)
+	body_outer.add_child(_deed_trade_btn)
 
 	var btn_close: Button = Button.new()
 	btn_close.text = "Fechar" if _is_touch_mode else "Fechar [ESC]"
 	btn_close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(btn_close, "#213329", "#2E473A", "#17241D", "#D4AF37", Color.WHITE, false, _bh(42.0), _fs(14.0), 12.0, true)
 	btn_close.pressed.connect(hide_deed_modal)
-	deed_btns_row.add_child(btn_close)
+	body_outer.add_child(btn_close)
 
 func _deeds_spacing_init(vb: VBoxContainer, sep: int) -> void:
 	vb.add_theme_constant_override("separation", sep)
 
 func hide_deed_modal() -> void:
+	_deed_open_tile_idx = -1
 	if _deed_overlay != null:
 		_deed_overlay.visible = false
+
+func get_open_deed_tile_index() -> int:
+	if _deed_overlay != null and _deed_overlay.visible:
+		return _deed_open_tile_idx
+	return -1
 
 func _add_deed_kv_row(label_text: String, value_text: String, highlight: bool = false, value_color: Color = Color("#F2F7F4")) -> void:
 	var row: HBoxContainer = HBoxContainer.new()
@@ -1529,18 +1521,44 @@ func show_deed_modal(info: Dictionary) -> void:
 			"GO_TO_JAIL":
 				desc_lbl.text = "Vá direto para o Xadrez sem passar pelo Galpão Central e sem receber o bônus da partida."
 			"FREE_PARKING":
-				desc_lbl.text = "Feriadão de 20 de Setembro: descanso livre de cobranças nesta rodada."
+				desc_lbl.text = "Feriadão de 20 de Setembro: Festa Farroupilha! Convoca imediatamente um Leilão Farroupilha de lote livre ou promove o Rateio de Chimarrão no Galpão (+R$ 20 de cada adversário solvente)."
 			_:
 				desc_lbl.text = "Casa #%d do tabuleiro." % int(tile.get("index", 0))
 		_deed_body_box.add_child(desc_lbl)
 
+	_deed_open_tile_idx = int(info.get("tile_index", -1))
 	_deed_trade_target_id = int(info.get("owner_id", -1))
-	_deed_trade_tile_idx = int(info.get("tile_index", -1))
+	_deed_trade_tile_idx = _deed_open_tile_idx
 	_deed_cart_group = group_name
+
+	var is_owner_active: bool = bool(info.get("is_owner_active", false))
+	var show_build: bool = is_owner_active and tile_type == "PROPERTY" and bool(info.get("has_monopoly", false))
+	var show_sell: bool = is_owner_active and tile_type == "PROPERTY" and int(info.get("building_level", 0)) > 0
+	var show_mortgage: bool = is_owner_active and (tile_type == "PROPERTY" or tile_type == "COMPANY")
+	var show_cart: bool = bool(info.get("can_open_build_cart", false))
+	var show_offer: bool = bool(info.get("can_offer_in_trade", false))
+
+	if _deed_build_btn != null:
+		_deed_build_btn.visible = show_build
+		_deed_build_btn.text = str(info.get("build_label", "+Casa"))
+		_deed_build_btn.disabled = not bool(info.get("can_build", false))
+	if _deed_sell_btn != null:
+		_deed_sell_btn.visible = show_sell
+		_deed_sell_btn.text = str(info.get("sell_building_label", "-Casa"))
+		_deed_sell_btn.disabled = not bool(info.get("can_sell_building", false))
+	if _deed_mortgage_btn != null:
+		_deed_mortgage_btn.visible = show_mortgage
+		_deed_mortgage_btn.text = str(info.get("mortgage_label", "Hipotecar"))
+		_deed_mortgage_btn.disabled = not bool(info.get("can_mortgage", false))
+	if _deed_cart_btn != null:
+		_deed_cart_btn.visible = show_cart
+	if _deed_offer_trade_btn != null:
+		_deed_offer_trade_btn.visible = show_offer
+	if _deed_actions_grid != null:
+		_deed_actions_grid.visible = show_build or show_sell or show_mortgage or show_cart or show_offer
+
 	if _deed_trade_btn != null:
 		_deed_trade_btn.visible = bool(info.get("can_propose_trade", false)) and _deed_trade_target_id >= 0 and _deed_trade_tile_idx >= 0
-	if _deed_cart_btn != null:
-		_deed_cart_btn.visible = bool(info.get("can_open_build_cart", false))
 
 	_deed_overlay.visible = true
 
@@ -1791,11 +1809,11 @@ func _build_trade_modal() -> void:
 	_trade_confirm_btn.pressed.connect(_emit_trade)
 	btn_row.add_child(_trade_confirm_btn)
 
-func show_trade_modal(pre_target_id: int = -1, pre_request_tile: int = -1) -> void:
+func show_trade_modal(pre_target_id: int = -1, pre_request_tile: int = -1, pre_offer_tile: int = -1) -> void:
 	if _trade_overlay == null:
 		return
 	_trade_cash_value = 0
-	_refresh_trade_targets(pre_target_id, pre_request_tile)
+	_refresh_trade_targets(pre_target_id, pre_request_tile, pre_offer_tile)
 	_trade_overlay.visible = true
 
 func hide_trade_modal() -> void:
@@ -1806,7 +1824,7 @@ func _adjust_trade_cash(delta: int) -> void:
 	_trade_cash_value = clampi(_trade_cash_value + delta, -5000, 5000)
 	_refresh_trade_summary()
 
-func _refresh_trade_targets(pre_target_id: int = -1, pre_request_tile: int = -1) -> void:
+func _refresh_trade_targets(pre_target_id: int = -1, pre_request_tile: int = -1, pre_offer_tile: int = -1) -> void:
 	var prev_target_meta: Variant = _trade_target_select.get_selected_metadata()
 	var wanted_target_id: int = pre_target_id if pre_target_id >= 0 else (int(prev_target_meta) if prev_target_meta != null else -1)
 	_trade_target_select.clear()
@@ -1828,7 +1846,7 @@ func _refresh_trade_targets(pre_target_id: int = -1, pre_request_tile: int = -1)
 
 	if _trade_target_select.item_count > 0:
 		_trade_target_select.select(selected_idx)
-	_refresh_trade_dropdowns(pre_request_tile)
+	_refresh_trade_dropdowns(pre_request_tile, pre_offer_tile)
 
 func set_board_snapshot_meta(
 	owners_map: Dictionary[int, int],
@@ -1856,18 +1874,24 @@ func _is_tile_tradable_in_cache(tile_idx: int) -> bool:
 						return false
 	return true
 
-func _refresh_trade_dropdowns(pre_request_tile: int = -1) -> void:
+func _refresh_trade_dropdowns(pre_request_tile: int = -1, pre_offer_tile: int = -1) -> void:
 	_trade_offer_select.clear()
 	_trade_offer_select.add_item("Nenhuma escritura")
 	_trade_offer_select.set_item_metadata(0, -1)
 
+	var offer_pre_idx: int = 0
 	if _cached_current_idx >= 0 and _cached_current_idx < _cached_players.size():
 		var current_props: Array = _cached_players[_cached_current_idx].get("properties", [])
 		for t_idx: Variant in current_props:
 			var idx_int: int = int(t_idx)
 			if idx_int >= 0 and idx_int < _cached_tiles.size() and _is_tile_tradable_in_cache(idx_int):
 				_trade_offer_select.add_item(str(_cached_tiles[idx_int]["name"]))
-				_trade_offer_select.set_item_metadata(_trade_offer_select.item_count - 1, idx_int)
+				var added_off_idx: int = _trade_offer_select.item_count - 1
+				_trade_offer_select.set_item_metadata(added_off_idx, idx_int)
+				if pre_offer_tile >= 0 and idx_int == pre_offer_tile:
+					offer_pre_idx = added_off_idx
+	if offer_pre_idx > 0:
+		_trade_offer_select.select(offer_pre_idx)
 
 	_trade_request_select.clear()
 	_trade_request_select.add_item("Nenhuma escritura")
@@ -3524,11 +3548,27 @@ func _build_portfolio_modal() -> void:
 	_portfolio_list_box.add_theme_constant_override("separation", 7)
 	scroll_inner.add_child(_portfolio_list_box)
 
+	var p_btn_row: HBoxContainer = HBoxContainer.new()
+	p_btn_row.add_theme_constant_override("separation", 10)
+	body_vb.add_child(p_btn_row)
+
+	_portfolio_cart_btn = Button.new()
+	_portfolio_cart_btn.text = "Carrinho de Obras"
+	_portfolio_cart_btn.visible = false
+	_portfolio_cart_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_portfolio_cart_btn, "#1D4A38", "#27644C", "#143528", "#52B788", Color("#E4FFF2"), true, _bh(42.0), _fs(13.5), 12.0, true)
+	_portfolio_cart_btn.pressed.connect(func() -> void:
+		hide_player_portfolio_modal()
+		show_construction_cart_modal("")
+	)
+	p_btn_row.add_child(_portfolio_cart_btn)
+
 	var btn_close: Button = Button.new()
 	btn_close.text = "Fechar" if _is_touch_mode else "Fechar [ESC]"
+	btn_close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(btn_close, "#213329", "#2E473A", "#17241D", "#D4AF37", Color.WHITE, false, _bh(42.0), _fs(14.0), 14.0, true)
 	btn_close.pressed.connect(hide_player_portfolio_modal)
-	body_vb.add_child(btn_close)
+	p_btn_row.add_child(btn_close)
 
 func show_player_portfolio_modal(info: Dictionary) -> void:
 	if _portfolio_overlay == null:
@@ -3538,6 +3578,7 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 	for ch: Node in _portfolio_list_box.get_children():
 		ch.queue_free()
 
+	var info_pid: int = int(info.get("id", -1))
 	var p_name: String = str(info.get("name", "Estanceiro"))
 	var is_bot: bool = bool(info.get("is_bot", false))
 	var is_bankrupt: bool = bool(info.get("is_bankrupt", false))
@@ -3608,6 +3649,14 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 		_portfolio_monopoly_box.add_child(badge)
 
 	_portfolio_empty_label.visible = deeds.is_empty()
+	if _portfolio_cart_btn != null:
+		var can_cart_here: bool = (
+			not _cached_is_bot_turn
+			and info_pid >= 0
+			and info_pid == _cached_active_pid
+			and not monopolies.is_empty()
+		)
+		_portfolio_cart_btn.visible = can_cart_here
 	for d_entry: Variant in deeds:
 		if not (d_entry is Dictionary):
 			continue
@@ -3636,6 +3685,7 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 			if ev is InputEventMouseButton:
 				var mb: InputEventMouseButton = ev
 				if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed and tile_ref >= 0:
+					hide_player_portfolio_modal()
 					inspect_tile_requested.emit(tile_ref)
 		)
 		_portfolio_list_box.add_child(row_card)
@@ -4072,6 +4122,7 @@ func reset_hud_state() -> void:
 	clear_log()
 	_cached_players.clear()
 	_cached_current_idx = 0
+	_cached_active_pid = -1
 	_cached_player_colors.clear()
 	_cached_owned_options.clear()
 	_cached_selected_tile = -1
@@ -4081,6 +4132,7 @@ func reset_hud_state() -> void:
 	_cached_tradable_map.clear()
 	_cart_draft_levels.clear()
 	_cart_focus_group = ""
+	_deed_open_tile_idx = -1
 	_cached_houses_left = 32
 	_cached_hotels_left = 12
 	_cached_is_bot_turn = false
@@ -4151,24 +4203,6 @@ func show_event_toast(title: String, detail: String, tone: String = "positive") 
 		if _toast_panel != null:
 			_toast_panel.visible = false
 	)
-
-# --- Ações da Aba Escrituras ---
-
-func _on_build_pressed() -> void:
-	if _cached_selected_tile >= 0:
-		build_pressed.emit(_cached_selected_tile)
-
-func _on_sell_building_pressed() -> void:
-	if _cached_selected_tile >= 0:
-		sell_building_pressed.emit(_cached_selected_tile)
-
-func _on_mortgage_pressed() -> void:
-	if _cached_selected_tile >= 0:
-		mortgage_pressed.emit(_cached_selected_tile)
-
-func _on_inspect_selected_pressed() -> void:
-	if _cached_selected_tile >= 0:
-		inspect_tile_requested.emit(_cached_selected_tile)
 
 func set_round_info(round_num: int, is_market_cycle: bool) -> void:
 	if _round_label == null or _round_badge_style == null:
@@ -4305,6 +4339,9 @@ func refresh_hud(
 	if has_active:
 		var active_p: Dictionary = players[current_idx]
 		active_pid = int(active_p.get("id", current_idx))
+	_cached_active_pid = active_pid
+	if has_active:
+		var active_p: Dictionary = players[current_idx]
 		var active_col: Color = player_colors.get(active_pid, Color("#FFCA3A"))
 		active_name = str(active_p.get("name", "-"))
 		active_is_real_bot = bool(active_p.get("is_bot", false))
@@ -4352,30 +4389,14 @@ func refresh_hud(
 	_bank_label.text = "%dC • %dH" % [houses_left, hotels_left]
 	_tile_info_label.text = tile_info
 
-	# Atualizar badges das abas
-	if _tab_buttons.size() >= 3:
+	# Atualizar badges das abas (Estanceiros | Diário)
+	if _tab_buttons.size() >= 2:
 		_tab_buttons[TAB_PLAYERS].text = "Estanceiros (%d)" % players.size()
-		_tab_buttons[TAB_DEEDS].text = "Escrituras (%d)" % owned_options.size()
 		_tab_buttons[TAB_LOG].text = "Diário"
 
 	_rebuild_players_list(players, current_idx, player_colors, is_bot_turn)
-	_rebuild_deeds_list(owned_options, selected_tile_idx, tiles, is_bot_turn)
 
-	# Atualizar botões da Aba Escrituras
 	var lock_controls: bool = is_bot_turn
-	_deeds_action_box.visible = not owned_options.is_empty()
-	_btn_build.text = build_label
-	_btn_build.disabled = lock_controls or not can_build
-	_btn_sell_building.text = sell_building_label
-	_btn_sell_building.disabled = lock_controls or not can_sell_building
-	_btn_mortgage.text = mortgage_label
-	_btn_mortgage.disabled = lock_controls or not can_mortgage
-	_btn_inspect_selected.disabled = (selected_tile_idx < 0)
-	if _btn_open_cart != null:
-		var has_monopolies: bool = has_active and not ConstructionCartHelper.collect_player_monopolies(
-			active_pid, tiles, _cached_owners_map, _cached_mortgaged_map
-		).is_empty()
-		_btn_open_cart.disabled = lock_controls or (not has_monopolies)
 	if lock_controls:
 		hide_construction_cart_modal()
 
@@ -4436,8 +4457,9 @@ func refresh_hud(
 		_btn_deeds_jump.text = "Quitar Dívida (%d)" % owned_options.size()
 		_apply_button_theme(_btn_deeds_jump, "#592822", "#75352D", "#401C18", "#FF758F", Color("#FFE8E8"), true, _bh(38.0), _fs(13.0), 10.0, true)
 	else:
-		_btn_deeds_jump.text = "Escrituras (%d)" % owned_options.size()
+		_btn_deeds_jump.text = "Minhas Escrituras (%d)" % owned_options.size()
 		_apply_button_theme(_btn_deeds_jump, "#1B2E25", "#254033", "#13211A", "#52B788", Color("#E9F5EE"), false, _bh(38.0), _fs(13.0), 10.0, true)
+	_btn_deeds_jump.disabled = not has_active
 
 func set_network_identity(is_online: bool, is_host: bool, local_peer_id: int, local_player_id: int, wait_text: String, transport_label: String = "ONLINE", room_code: String = "") -> void:
 	_net_is_online = is_online
@@ -4699,52 +4721,3 @@ func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_
 		chevron_lbl.add_theme_font_size_override("font_size", _fs(15.0))
 		chevron_lbl.add_theme_color_override("font_color", Color("#8EA89A"))
 		row.add_child(chevron_lbl)
-
-func _rebuild_deeds_list(owned_options: Array[Dictionary], selected_tile_idx: int, tiles: Array[Dictionary], is_bot_turn: bool) -> void:
-	for child: Node in _deeds_list_box.get_children():
-		child.queue_free()
-
-	_deeds_empty_label.visible = owned_options.is_empty()
-	if owned_options.is_empty():
-		return
-
-	var item_h: float = _bh(42.0)
-	for opt: Dictionary in owned_options:
-		var tid: int = int(opt["tile_index"])
-		var label_str: String = str(opt["label"])
-		var is_sel: bool = (tid == selected_tile_idx)
-		var stripe_hex: String = "#365C4E"
-		if tid >= 0 and tid < tiles.size():
-			var c_hex: String = str(tiles[tid].get("color", ""))
-			if c_hex != "":
-				stripe_hex = c_hex
-
-		var row_btn: Button = Button.new()
-		row_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row_btn.custom_minimum_size = Vector2(0.0, item_h)
-		row_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row_btn.clip_text = true
-		row_btn.text = ("▸ %s" if is_sel else "  %s") % label_str
-		row_btn.disabled = is_bot_turn
-		row_btn.focus_mode = Control.FOCUS_NONE
-		row_btn.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
-		if is_sel and _bold_font != null:
-			row_btn.add_theme_font_override("font", _bold_font)
-		row_btn.add_theme_font_size_override("font_size", _fs(12.5))
-		row_btn.add_theme_color_override("font_color", Color("#FFFDF5") if is_sel else Color("#D5E4DB"))
-
-		var sb: StyleBoxFlat = _make_panel_style("#1E3429" if is_sel else "#111A15", "#E9C46A" if is_sel else "#26382E", 9, 2 if is_sel else 1)
-		sb.border_width_left = 8
-		sb.border_color = Color(stripe_hex)
-		sb.content_margin_left = 10.0
-		sb.content_margin_right = 10.0
-		row_btn.add_theme_stylebox_override("normal", sb)
-		var sb_hover: StyleBoxFlat = sb.duplicate() as StyleBoxFlat
-		sb_hover.bg_color = Color("#254234")
-		row_btn.add_theme_stylebox_override("hover", sb_hover)
-		row_btn.add_theme_stylebox_override("pressed", sb_hover)
-		row_btn.add_theme_stylebox_override("focus", sb_hover)
-
-		var tile_ref: int = tid
-		row_btn.pressed.connect(func() -> void: property_selected.emit(tile_ref))
-		_deeds_list_box.add_child(row_btn)
