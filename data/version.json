@@ -3,8 +3,8 @@
     "version":  "0.8.0",
     "build_number":  8,
     "channel":  "stable",
-    "github_repo":  "",
+    "github_repo":  "rzanca/MagnataDoPampa",
     "release_notes":  "Modo Clássico completo com Carta do Lote unificada, evento 20 de Setembro, leilão próprio, áudio procedural e multiplayer P2P/Web.",
-    "built_at":  "2026-11-26T04:32:01Z",
-    "git_commit":  "b2f17f3"
+    "built_at":  "2026-11-26T04:35:29Z",
+    "git_commit":  "87623fe"
 }

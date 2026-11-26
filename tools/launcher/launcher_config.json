@@ -1,7 +1,7 @@
 {
-  "product_name": "Magnata do Pampa",
-  "github_repo": "",
-  "game_exe_name": "MagnataDoPampa.exe",
-  "manifest_asset_name": "manifest.json",
-  "release_channel": "stable"
+    "product_name":  "Magnata do Pampa",
+    "github_repo":  "rzanca/MagnataDoPampa",
+    "game_exe_name":  "MagnataDoPampa.exe",
+    "manifest_asset_name":  "manifest.json",
+    "release_channel":  "stable"
 }
