@@ -9,6 +9,7 @@ signal property_selected(tile_index: int)
 signal build_pressed(tile_index: int)
 signal sell_building_pressed(tile_index: int)
 signal mortgage_pressed(tile_index: int)
+signal build_cart_applied(target_levels: Dictionary)
 signal end_turn_pressed
 signal trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_delta: int)
 signal trade_offer_responded(offer_id: int, accepted: bool)
@@ -28,6 +29,7 @@ signal chance_card_dismissed
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
 const TradeAndAuctionHelper = preload("res://ui/shared/TradeAndAuctionHelper.gd")
+const ConstructionCartHelper = preload("res://ui/shared/ConstructionCartHelper.gd")
 
 const STATUS_BG_DEFAULT: Color = Color(UIStyleTokens.BG_STATUS_DEFAULT)
 const STATUS_BORDER_DEFAULT: Color = Color(UIStyleTokens.BORDER_GOLD)
@@ -95,6 +97,7 @@ var _btn_build: Button
 var _btn_sell_building: Button
 var _btn_mortgage: Button
 var _btn_inspect_selected: Button
+var _btn_open_cart: Button
 var _log_label: Label
 var _log_scroll: ScrollContainer
 
@@ -122,8 +125,20 @@ var _deed_title_label: Label
 var _deed_group_label: Label
 var _deed_body_box: VBoxContainer
 var _deed_trade_btn: Button
+var _deed_cart_btn: Button
 var _deed_trade_target_id: int = -1
 var _deed_trade_tile_idx: int = -1
+var _deed_cart_group: String = ""
+
+var _cart_overlay: Control
+var _cart_card: PanelContainer
+var _cart_scroll: ScrollContainer
+var _cart_list_box: VBoxContainer
+var _cart_summary_label: Label
+var _cart_bank_label: Label
+var _cart_confirm_btn: Button
+var _cart_draft_levels: Dictionary[int, int] = {}
+var _cart_focus_group: String = ""
 
 var _trade_overlay: Control
 var _trade_target_select: OptionButton
@@ -248,6 +263,9 @@ var _cached_owners_map: Dictionary[int, int] = {}
 var _cached_buildings_map: Dictionary[int, int] = {}
 var _cached_mortgaged_map: Dictionary[int, bool] = {}
 var _cached_tradable_map: Dictionary[int, bool] = {}
+var _cached_houses_left: int = 32
+var _cached_hotels_left: int = 12
+var _cached_is_bot_turn: bool = false
 var _cached_is_2d_cam: bool = false
 var _last_board_rect: Rect2 = Rect2(18.0, 18.0, 1418.0, 1044.0)
 var _last_layout_vp_size: Vector2 = Vector2.ZERO
@@ -369,6 +387,9 @@ func _input(event: InputEvent) -> void:
 			if _deed_overlay != null and _deed_overlay.visible:
 				hide_deed_modal()
 				get_viewport().set_input_as_handled()
+			elif _cart_overlay != null and _cart_overlay.visible:
+				hide_construction_cart_modal()
+				get_viewport().set_input_as_handled()
 			elif _portfolio_overlay != null and _portfolio_overlay.visible:
 				hide_player_portfolio_modal()
 				get_viewport().set_input_as_handled()
@@ -389,6 +410,8 @@ func has_blocking_modal_open() -> bool:
 	if _auction_overlay != null and _auction_overlay.visible:
 		return true
 	if _trade_confirm_overlay != null and _trade_confirm_overlay.visible:
+		return true
+	if _cart_overlay != null and _cart_overlay.visible:
 		return true
 	if _chance_overlay != null and _chance_overlay.visible:
 		return true
@@ -467,6 +490,12 @@ func _update_responsive_layout() -> void:
 	if _portfolio_scroll != null:
 		var port_scroll_h: float = clampf(vp_size.y * 0.48, 220.0, 500.0)
 		_portfolio_scroll.custom_minimum_size = Vector2(0.0, port_scroll_h)
+	if _cart_card != null:
+		var cart_w: float = clampf(vp_size.x * 0.50, 560.0, 780.0) if not _is_touch_mode else clampf(vp_size.x * 0.78, 580.0, 860.0)
+		_cart_card.custom_minimum_size = Vector2(minf(cart_w, vp_size.x - 40.0), 0.0)
+	if _cart_scroll != null:
+		var cart_scroll_h: float = clampf(vp_size.y * 0.50, 240.0, 520.0)
+		_cart_scroll.custom_minimum_size = Vector2(0.0, cart_scroll_h)
 
 	if _board_quick_bar != null:
 		_board_quick_bar.position = Vector2(pad + 14.0, pad + 14.0)
@@ -1055,6 +1084,13 @@ func _build_tabs_zone(parent: VBoxContainer) -> void:
 	_btn_inspect_selected.pressed.connect(_on_inspect_selected_pressed)
 	d_row2.add_child(_btn_inspect_selected)
 
+	_btn_open_cart = Button.new()
+	_btn_open_cart.text = "Carrinho de Obras (Monopólios)"
+	_btn_open_cart.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_btn_open_cart, "#1B3D30", "#265443", "#132B22", "#52B788", Color("#D8FFE8"), false, act_h, act_fs, 10.0, true)
+	_btn_open_cart.pressed.connect(func() -> void: show_construction_cart_modal(""))
+	_deeds_action_box.add_child(_btn_open_cart)
+
 	# --- ABA 2: DIÁRIO COMPLETO DA RODADA ---
 	var log_tab: VBoxContainer = VBoxContainer.new()
 	log_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -1224,6 +1260,7 @@ func _build_modals() -> void:
 	add_child(_modal_layer)
 
 	_build_deed_modal()
+	_build_construction_cart_modal()
 	_build_trade_modal()
 	_build_trade_confirm_modal()
 	_build_auction_modal()
@@ -1343,6 +1380,18 @@ func _build_deed_modal() -> void:
 			show_trade_modal(t_id, t_idx)
 	)
 	deed_btns_row.add_child(_deed_trade_btn)
+
+	_deed_cart_btn = Button.new()
+	_deed_cart_btn.text = "Obras no Monopólio (Carrinho)"
+	_deed_cart_btn.visible = false
+	_deed_cart_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_cart_btn, "#1D4A38", "#27644C", "#143528", "#52B788", Color("#E4FFF2"), true, _bh(42.0), _fs(13.5), 10.0, true)
+	_deed_cart_btn.pressed.connect(func() -> void:
+		var fg: String = _deed_cart_group
+		hide_deed_modal()
+		show_construction_cart_modal(fg)
+	)
+	deed_btns_row.add_child(_deed_cart_btn)
 
 	var btn_close: Button = Button.new()
 	btn_close.text = "Fechar" if _is_touch_mode else "Fechar [ESC]"
@@ -1487,8 +1536,11 @@ func show_deed_modal(info: Dictionary) -> void:
 
 	_deed_trade_target_id = int(info.get("owner_id", -1))
 	_deed_trade_tile_idx = int(info.get("tile_index", -1))
+	_deed_cart_group = group_name
 	if _deed_trade_btn != null:
 		_deed_trade_btn.visible = bool(info.get("can_propose_trade", false)) and _deed_trade_target_id >= 0 and _deed_trade_tile_idx >= 0
+	if _deed_cart_btn != null:
+		_deed_cart_btn.visible = bool(info.get("can_open_build_cart", false))
 
 	_deed_overlay.visible = true
 
@@ -3664,9 +3716,347 @@ func hide_player_portfolio_modal() -> void:
 	if _portfolio_overlay != null:
 		_portfolio_overlay.visible = false
 
+# 9. Modal de Carrinho de Obras (Construção/Venda Equilibrada em Lote nos Monopólios)
+func _build_construction_cart_modal() -> void:
+	_cart_overlay = _create_modal_backdrop(hide_construction_cart_modal)
+
+	var center: CenterContainer = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_cart_overlay.add_child(center)
+
+	_cart_card = PanelContainer.new()
+	_cart_card.custom_minimum_size = Vector2(680.0 if _is_touch_mode else 620.0, 0.0)
+	var card_style: StyleBoxFlat = _make_panel_style("#121E18", "#52B788", 18, 2)
+	card_style.shadow_size = 26
+	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.65)
+	_cart_card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(_cart_card)
+
+	var margin: MarginContainer = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_top", 18)
+	margin.add_theme_constant_override("margin_bottom", 18)
+	_cart_card.add_child(margin)
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 10)
+	margin.add_child(vbox)
+
+	var hdr_row: HBoxContainer = HBoxContainer.new()
+	hdr_row.add_theme_constant_override("separation", 10)
+	vbox.add_child(hdr_row)
+
+	var title_vb: VBoxContainer = VBoxContainer.new()
+	title_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	title_vb.add_theme_constant_override("separation", 2)
+	hdr_row.add_child(title_vb)
+
+	var title_lbl: Label = Label.new()
+	title_lbl.text = "CARRINHO DE OBRAS (MONOPÓLIOS)"
+	if _bold_font != null:
+		title_lbl.add_theme_font_override("font", _bold_font)
+	title_lbl.add_theme_font_size_override("font_size", _fs(18.0))
+	title_lbl.add_theme_color_override("font_color", Color("#9CF6B8"))
+	title_vb.add_child(title_lbl)
+
+	var sub_lbl: Label = Label.new()
+	sub_lbl.text = "Planeje casas e hotéis respeitando o equilíbrio por grupo e o estoque do Banco."
+	sub_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	sub_lbl.add_theme_font_size_override("font_size", _fs(11.5))
+	sub_lbl.add_theme_color_override("font_color", Color("#A7C2B2"))
+	title_vb.add_child(sub_lbl)
+
+	_cart_bank_label = Label.new()
+	_cart_bank_label.text = "Banco: 32C • 12H"
+	_cart_bank_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	if _bold_font != null:
+		_cart_bank_label.add_theme_font_override("font", _bold_font)
+	_cart_bank_label.add_theme_font_size_override("font_size", _fs(12.5))
+	_cart_bank_label.add_theme_color_override("font_color", Color("#F5CA5C"))
+	hdr_row.add_child(_cart_bank_label)
+
+	_cart_scroll = ScrollContainer.new()
+	_cart_scroll.custom_minimum_size = Vector2(0.0, 360.0 if _is_touch_mode else 320.0)
+	_cart_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_cart_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	vbox.add_child(_cart_scroll)
+
+	_cart_list_box = VBoxContainer.new()
+	_cart_list_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_cart_list_box.add_theme_constant_override("separation", 10)
+	_cart_scroll.add_child(_cart_list_box)
+
+	var summary_panel: PanelContainer = PanelContainer.new()
+	var sum_sb: StyleBoxFlat = _make_panel_style("#0E1712", "#2F4E3F", 10, 1)
+	sum_sb.content_margin_left = 12.0
+	sum_sb.content_margin_right = 12.0
+	sum_sb.content_margin_top = 8.0
+	sum_sb.content_margin_bottom = 8.0
+	summary_panel.add_theme_stylebox_override("panel", sum_sb)
+	vbox.add_child(summary_panel)
+
+	_cart_summary_label = Label.new()
+	_cart_summary_label.text = ""
+	_cart_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_cart_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		_cart_summary_label.add_theme_font_override("font", _bold_font)
+	_cart_summary_label.add_theme_font_size_override("font_size", _fs(12.5))
+	_cart_summary_label.add_theme_color_override("font_color", Color("#E4F2EA"))
+	summary_panel.add_child(_cart_summary_label)
+
+	var btn_row: HBoxContainer = HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(btn_row)
+
+	var btn_reset: Button = Button.new()
+	btn_reset.text = "Zerar"
+	btn_reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_reset.size_flags_stretch_ratio = 0.65
+	_apply_button_theme(btn_reset, "#26302B", "#34433C", "#1A221E", "#5A7366", Color("#D8E8DE"), false, _bh(42.0), _fs(13.0), 10.0, true)
+	btn_reset.pressed.connect(_reset_cart_draft)
+	btn_row.add_child(btn_reset)
+
+	var btn_cancel: Button = Button.new()
+	btn_cancel.text = "Cancelar"
+	btn_cancel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn_cancel.size_flags_stretch_ratio = 0.75
+	_apply_button_theme(btn_cancel, "#242D29", "#33403A", "#19201D", "#6C8477", Color.WHITE, false, _bh(42.0), _fs(13.5), 10.0, true)
+	btn_cancel.pressed.connect(hide_construction_cart_modal)
+	btn_row.add_child(btn_cancel)
+
+	_cart_confirm_btn = Button.new()
+	_cart_confirm_btn.text = "Confirmar Obras"
+	_cart_confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_cart_confirm_btn.size_flags_stretch_ratio = 1.4
+	_apply_button_theme(_cart_confirm_btn, "#227557", "#2C946E", "#185740", "#A8FF78", Color.WHITE, true, _bh(42.0), _fs(14.0), 10.0, true)
+	_cart_confirm_btn.pressed.connect(_apply_cart_confirm)
+	btn_row.add_child(_cart_confirm_btn)
+
+func show_construction_cart_modal(focus_group: String = "") -> void:
+	if _cart_overlay == null or _cached_is_bot_turn:
+		return
+	if _cached_current_idx < 0 or _cached_current_idx >= _cached_players.size():
+		return
+	_cart_focus_group = focus_group
+	_reset_cart_draft()
+	_cart_overlay.visible = true
+
+func hide_construction_cart_modal() -> void:
+	if _cart_overlay != null:
+		_cart_overlay.visible = false
+
+func _reset_cart_draft() -> void:
+	_cart_draft_levels.clear()
+	if _cached_current_idx >= 0 and _cached_current_idx < _cached_players.size():
+		var pid: int = int(_cached_players[_cached_current_idx].get("id", _cached_current_idx))
+		var monos: Array[Dictionary] = ConstructionCartHelper.collect_player_monopolies(
+			pid, _cached_tiles, _cached_owners_map, _cached_mortgaged_map
+		)
+		for m: Dictionary in monos:
+			var g_tiles: Array = m.get("tiles", [])
+			for tid_var: Variant in g_tiles:
+				var tid: int = int(tid_var)
+				_cart_draft_levels[tid] = clampi(int(_cached_buildings_map.get(tid, 0)), 0, 5)
+	_rebuild_construction_cart_ui()
+
+func _step_cart_tile_level(tile_idx: int, delta: int) -> void:
+	var cur_lvl: int = int(_cart_draft_levels.get(tile_idx, int(_cached_buildings_map.get(tile_idx, 0))))
+	_cart_draft_levels[tile_idx] = clampi(cur_lvl + delta, 0, 5)
+	_rebuild_construction_cart_ui()
+
+func _apply_cart_confirm() -> void:
+	var payload: Dictionary = {}
+	for tid: int in _cart_draft_levels.keys():
+		payload[tid] = int(_cart_draft_levels[tid])
+	hide_construction_cart_modal()
+	build_cart_applied.emit(payload)
+
+func _rebuild_construction_cart_ui() -> void:
+	if _cart_list_box == null:
+		return
+	for child: Node in _cart_list_box.get_children():
+		child.queue_free()
+
+	if _cached_current_idx < 0 or _cached_current_idx >= _cached_players.size():
+		_cart_summary_label.text = "Nenhum jogador ativo."
+		_cart_confirm_btn.disabled = true
+		return
+
+	var active_p: Dictionary = _cached_players[_cached_current_idx]
+	var active_pid: int = int(active_p.get("id", _cached_current_idx))
+	var active_money: int = int(active_p.get("money", 0))
+	var monos: Array[Dictionary] = ConstructionCartHelper.collect_player_monopolies(
+		active_pid, _cached_tiles, _cached_owners_map, _cached_mortgaged_map
+	)
+
+	if _cart_focus_group != "":
+		var sorted_monos: Array[Dictionary] = []
+		for m: Dictionary in monos:
+			if str(m.get("group", "")) == _cart_focus_group:
+				sorted_monos.append(m)
+		for m: Dictionary in monos:
+			if str(m.get("group", "")) != _cart_focus_group:
+				sorted_monos.append(m)
+		monos = sorted_monos
+
+	if monos.is_empty():
+		var empty_lbl: Label = Label.new()
+		empty_lbl.text = "Você ainda não possui um grupo de cor completo (monopólio) para construir."
+		empty_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		empty_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		empty_lbl.add_theme_font_size_override("font_size", _fs(13.0))
+		empty_lbl.add_theme_color_override("font_color", Color("#9CB6A7"))
+		_cart_list_box.add_child(empty_lbl)
+		_cart_bank_label.text = "Banco: %dC • %dH" % [_cached_houses_left, _cached_hotels_left]
+		_cart_summary_label.text = "Complete todos os terrenos de uma mesma cor para liberar construções."
+		_cart_confirm_btn.disabled = true
+		return
+
+	var eval: Dictionary = ConstructionCartHelper.evaluate_cart_state(
+		monos, _cached_tiles, _cached_buildings_map, _cart_draft_levels, _cached_houses_left, _cached_hotels_left, active_money
+	)
+	var proj_houses: int = int(eval.get("projected_houses_left", _cached_houses_left))
+	var proj_hotels: int = int(eval.get("projected_hotels_left", _cached_hotels_left))
+	var net_cost: int = int(eval.get("net_cost", 0))
+	var proj_money: int = int(eval.get("projected_money", active_money))
+	var is_valid: bool = bool(eval.get("valid", false))
+	var changed_count: int = int(eval.get("changed_count", 0))
+	var reason: String = str(eval.get("reason", ""))
+
+	_cart_bank_label.text = "Banco após obras: %dC • %dH" % [proj_houses, proj_hotels]
+	_cart_bank_label.add_theme_color_override("font_color", Color("#FF758F") if (proj_houses < 0 or proj_hotels < 0) else Color("#F5CA5C"))
+
+	for m: Dictionary in monos:
+		var g_name: String = str(m.get("group", "")).replace("_", " ")
+		var g_col_hex: String = str(m.get("color_hex", "#2A9D8F"))
+		var any_mort: bool = bool(m.get("any_mortgaged", false))
+		var g_tiles: Array = m.get("tiles", [])
+		var is_focused: bool = (_cart_focus_group != "" and str(m.get("group", "")) == _cart_focus_group)
+
+		var g_card: PanelContainer = PanelContainer.new()
+		var g_sb: StyleBoxFlat = _make_panel_style("#16231C", "#F5CA5C" if is_focused else g_col_hex, 12, 2 if is_focused else 1)
+		g_sb.content_margin_left = 12.0
+		g_sb.content_margin_right = 12.0
+		g_sb.content_margin_top = 10.0
+		g_sb.content_margin_bottom = 10.0
+		g_card.add_theme_stylebox_override("panel", g_sb)
+		_cart_list_box.add_child(g_card)
+
+		var g_vb: VBoxContainer = VBoxContainer.new()
+		g_vb.add_theme_constant_override("separation", 6)
+		g_card.add_child(g_vb)
+
+		var g_hdr_hb: HBoxContainer = HBoxContainer.new()
+		g_hdr_hb.add_theme_constant_override("separation", 8)
+		g_vb.add_child(g_hdr_hb)
+
+		var dot: Panel = Panel.new()
+		dot.custom_minimum_size = Vector2(12.0, 12.0)
+		var dot_sb: StyleBoxFlat = StyleBoxFlat.new()
+		dot_sb.bg_color = Color(g_col_hex)
+		dot_sb.set_corner_radius_all(3)
+		dot.add_theme_stylebox_override("panel", dot_sb)
+		g_hdr_hb.add_child(dot)
+
+		var g_title: Label = Label.new()
+		g_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		g_title.text = "GRUPO %s%s" % [g_name, " (DESIPOTEQUE ANTES DE CONSTRUIR)" if any_mort else ""]
+		if _bold_font != null:
+			g_title.add_theme_font_override("font", _bold_font)
+		g_title.add_theme_font_size_override("font_size", _fs(12.5))
+		g_title.add_theme_color_override("font_color", Color("#FF8FA3") if any_mort else Color("#FFE699"))
+		g_hdr_hb.add_child(g_title)
+
+		for tid_var: Variant in g_tiles:
+			var tid: int = int(tid_var)
+			if tid < 0 or tid >= _cached_tiles.size():
+				continue
+			var tile: Dictionary = _cached_tiles[tid]
+			var base_l: int = clampi(int(_cached_buildings_map.get(tid, 0)), 0, 5)
+			var draft_l: int = clampi(int(_cart_draft_levels.get(tid, base_l)), 0, 5)
+			var house_cost: int = int(tile.get("house_cost", 50))
+			var sell_unit: int = floori(float(house_cost) * 0.5)
+
+			var row_hb: HBoxContainer = HBoxContainer.new()
+			row_hb.add_theme_constant_override("separation", 8)
+			row_hb.alignment = BoxContainer.ALIGNMENT_CENTER
+			g_vb.add_child(row_hb)
+
+			var t_vb: VBoxContainer = VBoxContainer.new()
+			t_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			t_vb.add_theme_constant_override("separation", 1)
+			row_hb.add_child(t_vb)
+
+			var t_name: Label = Label.new()
+			t_name.text = str(tile.get("name", "Lote"))
+			t_name.clip_text = true
+			if _bold_font != null:
+				t_name.add_theme_font_override("font", _bold_font)
+			t_name.add_theme_font_size_override("font_size", _fs(13.0))
+			t_name.add_theme_color_override("font_color", Color("#FFFDF5"))
+			t_vb.add_child(t_name)
+
+			var lvl_now_str: String = "Hotel" if base_l >= 5 else ("%dc" % base_l)
+			var lvl_new_str: String = "Hotel" if draft_l >= 5 else ("%dc" % draft_l)
+			var t_sub: Label = Label.new()
+			t_sub.text = "Atual: %s -> Plano: %s • Obra %s | Venda +%s" % [lvl_now_str, lvl_new_str, _format_brl(house_cost), _format_brl(sell_unit)]
+			t_sub.add_theme_font_size_override("font_size", _fs(11.0))
+			t_sub.add_theme_color_override("font_color", Color("#9CF6B8") if draft_l != base_l else Color("#9BB5A6"))
+			t_vb.add_child(t_sub)
+
+			var step_btn_h: float = _bh(34.0)
+			var btn_minus: Button = Button.new()
+			btn_minus.text = "−"
+			btn_minus.custom_minimum_size = Vector2(40.0 if _is_touch_mode else 34.0, step_btn_h)
+			btn_minus.disabled = (draft_l <= 0)
+			_apply_button_theme(btn_minus, "#3D2724", "#553631", "#2B1B19", "#C46E5F", Color.WHITE, false, step_btn_h, _fs(15.0), 8.0, true)
+			var minus_tid: int = tid
+			btn_minus.pressed.connect(func() -> void: _step_cart_tile_level(minus_tid, -1))
+			row_hb.add_child(btn_minus)
+
+			var lvl_badge: Label = Label.new()
+			lvl_badge.custom_minimum_size = Vector2(56.0, 0.0)
+			lvl_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			lvl_badge.text = "HOTEL" if draft_l >= 5 else "%d C" % draft_l
+			if _bold_font != null:
+				lvl_badge.add_theme_font_override("font", _bold_font)
+			lvl_badge.add_theme_font_size_override("font_size", _fs(13.0))
+			lvl_badge.add_theme_color_override("font_color", Color("#FFE28A") if draft_l >= 5 else Color("#E8FFF2"))
+			row_hb.add_child(lvl_badge)
+
+			var btn_plus: Button = Button.new()
+			btn_plus.text = "+"
+			btn_plus.custom_minimum_size = Vector2(40.0 if _is_touch_mode else 34.0, step_btn_h)
+			btn_plus.disabled = any_mort or (draft_l >= 5)
+			_apply_button_theme(btn_plus, "#1D4A38", "#27644C", "#143528", "#52B788", Color.WHITE, false, step_btn_h, _fs(15.0), 8.0, true)
+			var plus_tid: int = tid
+			btn_plus.pressed.connect(func() -> void: _step_cart_tile_level(plus_tid, 1))
+			row_hb.add_child(btn_plus)
+
+	if changed_count == 0:
+		_cart_summary_label.text = "Nenhuma alteração pendente. Ajuste + ou − nos terrenos."
+		_cart_summary_label.add_theme_color_override("font_color", Color("#BDD3C6"))
+		_cart_confirm_btn.text = "Confirmar Obras"
+		_cart_confirm_btn.disabled = true
+	elif not is_valid:
+		_cart_summary_label.text = reason
+		_cart_summary_label.add_theme_color_override("font_color", Color("#FF8FA3"))
+		_cart_confirm_btn.text = "Ajustar Carrinho"
+		_cart_confirm_btn.disabled = true
+	else:
+		var cost_txt: String = ("Custo líquido: %s" % _format_brl(net_cost)) if net_cost > 0 else (("Reembolso líquido: +%s" % _format_brl(absi(net_cost))) if net_cost < 0 else "Troca neutra (R$ 0)")
+		_cart_summary_label.text = "%s • Saldo projetado: %s" % [cost_txt, _format_brl(proj_money)]
+		_cart_summary_label.add_theme_color_override("font_color", Color("#A8FF78"))
+		_cart_confirm_btn.text = "Confirmar (%d lote%s)" % [changed_count, "" if changed_count == 1 else "s"]
+		_cart_confirm_btn.disabled = false
+
 func hide_all_modals() -> void:
 	hide_chance_card_modal(true)
 	hide_player_portfolio_modal()
+	hide_construction_cart_modal()
 	hide_settings_modal()
 	hide_deed_modal()
 	hide_trade_modal()
@@ -3878,6 +4268,9 @@ func refresh_hud(
 	_cached_player_colors = player_colors
 	_cached_owned_options = owned_options
 	_cached_selected_tile = selected_tile_idx
+	_cached_houses_left = houses_left
+	_cached_hotels_left = hotels_left
+	_cached_is_bot_turn = is_bot_turn
 
 	var live_vp_size: Vector2 = _get_effective_viewport_size()
 	if live_vp_size.x >= 320.0 and live_vp_size.y >= 240.0 and not live_vp_size.is_equal_approx(_last_layout_vp_size):
@@ -3959,6 +4352,13 @@ func refresh_hud(
 	_btn_mortgage.text = mortgage_label
 	_btn_mortgage.disabled = lock_controls or not can_mortgage
 	_btn_inspect_selected.disabled = (selected_tile_idx < 0)
+	if _btn_open_cart != null:
+		var has_monopolies: bool = has_active and not ConstructionCartHelper.collect_player_monopolies(
+			active_pid, tiles, _cached_owners_map, _cached_mortgaged_map
+		).is_empty()
+		_btn_open_cart.disabled = lock_controls or (not has_monopolies)
+	if lock_controls:
+		hide_construction_cart_modal()
 
 	# Dock Contextual Inferior (sempre visível, com altura válida e atalhos claros no desktop)
 	if _dock_card != null:

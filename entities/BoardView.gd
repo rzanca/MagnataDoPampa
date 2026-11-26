@@ -11,6 +11,10 @@ var _tile_containers: Array[ColorRect] = []
 var _tile_borders: Array[ReferenceRect] = []
 var _building_overlays: Dictionary[int, Node2D] = {}
 var _owner_overlays: Dictionary[int, Node2D] = {}
+var _tile_value_labels: Dictionary[int, Label] = {}
+var _tiles_cache: Array[Dictionary] = []
+var _owners_cache: Dictionary[int, int] = {}
+var _buildings_cache: Dictionary[int, int] = {}
 var _player_colors: Dictionary[int, Color] = {}
 var _mortgaged_cache: Dictionary[int, bool] = {}
 
@@ -21,12 +25,12 @@ const BORDER_DEFAULT: Color = Color("#2B3630")
 const BORDER_HOVER: Color = Color("#D4AF37")
 
 const TOKEN_COLORS: Array[Color] = [
-	Color("#E63946"), # Vermelho
-	Color("#2A9D8F"), # Verde Mate
-	Color("#E9C46A"), # Ouro Pampa
-	Color("#457B9D"), # Azul Guaíba
-	Color("#8338EC"), # Roxo Vinhedo
-	Color("#E76F51")  # Terracota
+	Color("#FF3B4E"), # Vermelho
+	Color("#22C55E"), # Verde Pampa
+	Color("#FFCA3A"), # Ouro Pampa
+	Color("#2563EB"), # Azul Guaíba
+	Color("#A45CFF"), # Roxo Vinhedo
+	Color("#FF7A38")  # Terracota
 ]
 
 func build_board(tiles: Array[Dictionary]) -> void:
@@ -37,6 +41,10 @@ func build_board(tiles: Array[Dictionary]) -> void:
 	_tile_borders.clear()
 	_building_overlays.clear()
 	_owner_overlays.clear()
+	_tile_value_labels.clear()
+	_tiles_cache = tiles.duplicate(true)
+	_owners_cache.clear()
+	_buildings_cache.clear()
 	_mortgaged_cache.clear()
 
 	var center_bg: ColorRect = ColorRect.new()
@@ -162,6 +170,23 @@ func _create_tile_visual(tile_idx: int, pos: Vector2, size: Vector2, tile_data: 
 	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	container.add_child(lbl)
 
+	var t_type: String = str(tile_data.get("type", ""))
+	if t_type == "PROPERTY" or t_type == "COMPANY" or t_type == "TAX":
+		var val_lbl: Label = Label.new()
+		val_lbl.position = Vector2(2.0, size.y - 19.0)
+		val_lbl.size = Vector2(maxf(8.0, size.x - 4.0), 11.0)
+		val_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		val_lbl.add_theme_font_size_override("font_size", 7)
+		if t_type == "TAX":
+			val_lbl.text = "-R$%d" % int(tile_data.get("amount", 0))
+			val_lbl.add_theme_color_override("font_color", Color("#9B1B1B"))
+		else:
+			val_lbl.text = "R$%d" % int(tile_data.get("price", 0))
+			val_lbl.add_theme_color_override("font_color", Color("#7C5800"))
+		val_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		container.add_child(val_lbl)
+		_tile_value_labels[tile_idx] = val_lbl
+
 	return container
 
 func _on_tile_gui_input(tile_idx: int, event: InputEvent) -> void:
@@ -191,7 +216,50 @@ func get_player_color(player_id: int) -> Color:
 	var safe_idx: int = absi(player_id) % TOKEN_COLORS.size()
 	return TOKEN_COLORS[safe_idx]
 
+func _refresh_tile_value_labels() -> void:
+	for tile_idx: int in _tile_value_labels.keys():
+		if tile_idx < 0 or tile_idx >= _tiles_cache.size():
+			continue
+		var lbl: Label = _tile_value_labels[tile_idx]
+		if lbl == null or not is_instance_valid(lbl):
+			continue
+		var t: Dictionary = _tiles_cache[tile_idx]
+		var t_type: String = str(t.get("type", ""))
+		if t_type == "TAX":
+			continue
+		if not _owners_cache.has(tile_idx):
+			lbl.text = "R$%d" % int(t.get("price", 0))
+			lbl.add_theme_color_override("font_color", Color("#7C5800"))
+		elif _mortgaged_cache.get(tile_idx, false):
+			lbl.text = "HIPOT"
+			lbl.add_theme_color_override("font_color", Color("#9B1B1B"))
+		elif t_type == "COMPANY":
+			lbl.text = "%dx dados" % int(t.get("multiplier", 40))
+			lbl.add_theme_color_override("font_color", Color("#0C4A6E"))
+		elif t_type == "PROPERTY":
+			var owner_id: int = int(_owners_cache[tile_idx])
+			var rents: Array = t.get("rent", [])
+			var lvl: int = clampi(int(_buildings_cache.get(tile_idx, 0)), 0, maxi(0, rents.size() - 1))
+			var rent_val: int = int(rents[lvl]) if not rents.is_empty() else 0
+			if lvl == 0 and _has_monopoly_in_cache(owner_id, str(t.get("group", ""))):
+				rent_val *= 2
+			lbl.text = "Al.R$%d" % rent_val
+			lbl.add_theme_color_override("font_color", Color("#14532D"))
+
+func _has_monopoly_in_cache(owner_id: int, group_name: String) -> bool:
+	if group_name == "":
+		return false
+	var count: int = 0
+	for i: int in range(_tiles_cache.size()):
+		var t: Dictionary = _tiles_cache[i]
+		if str(t.get("type", "")) == "PROPERTY" and str(t.get("group", "")) == group_name:
+			count += 1
+			if int(_owners_cache.get(i, -1)) != owner_id:
+				return false
+	return count > 0
+
 func update_ownership(owners_map: Dictionary[int, int], mortgaged_map: Dictionary[int, bool]) -> void:
+	_owners_cache = owners_map.duplicate()
 	_mortgaged_cache.clear()
 	for tile_idx: int in _owner_overlays.keys():
 		var overlay: Node2D = _owner_overlays[tile_idx]
@@ -231,8 +299,10 @@ func update_ownership(owners_map: Dictionary[int, int], mortgaged_map: Dictionar
 		bar_outline.editor_only = false
 		bar_outline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		overlay.add_child(bar_outline)
+	_refresh_tile_value_labels()
 
 func update_buildings(buildings_map: Dictionary[int, int]) -> void:
+	_buildings_cache = buildings_map.duplicate()
 	for tile_idx: int in _building_overlays.keys():
 		var overlay: Node2D = _building_overlays[tile_idx]
 		for child: Node in overlay.get_children():
@@ -257,6 +327,7 @@ func update_buildings(buildings_map: Dictionary[int, int]) -> void:
 				house.color = Color("#2D6A4F")
 				house.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				overlay.add_child(house)
+	_refresh_tile_value_labels()
 
 func setup_tokens(players: Array[Dictionary]) -> void:
 	for token: Node2D in token_nodes:
@@ -325,3 +396,23 @@ func update_token_positions(players: Array[Dictionary]) -> void:
 		var offset_x: float = (float(col) - float(cols_in_row - 1) * 0.5) * 14.0
 		var offset_y: float = (float(row) - float(rows_total - 1) * 0.5) * 14.0
 		token_nodes[i].position = base_pos + Vector2(offset_x, offset_y)
+
+func animate_token_move(player_id: int, from_pos: int, steps: int, players: Array[Dictionary]) -> bool:
+	if player_id < 0 or player_id >= token_nodes.size() or tile_centers.is_empty():
+		update_token_positions(players)
+		return true
+	var token: Node2D = token_nodes[player_id]
+	var board_len: int = tile_centers.size()
+	var step_dir: int = 1 if steps >= 0 else -1
+	var total_hops: int = absi(steps)
+	var cur: int = from_pos
+	for _hop: int in range(total_hops):
+		if not is_inside_tree():
+			return false
+		cur = posmod(cur + step_dir, board_len)
+		var target: Vector2 = tile_centers[cur]
+		var tw: Tween = create_tween()
+		tw.tween_property(token, "position", target, 0.14).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		await tw.finished
+	update_token_positions(players)
+	return true

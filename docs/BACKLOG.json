@@ -48,14 +48,14 @@
       "id": "LOTE-03",
       "title": "Construção estilo Carrinho de Compras, rótulo dinâmico de aluguel e animação casa-a-casa",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Painel carrinho por monopólio, substituição do preço pelo aluguel em tempo real no tabuleiro, cores distintas Verde/Azul e salto casa por casa."
     },
     {
       "id": "LOTE-04",
       "title": "Reset pós-partida, seleção exclusiva no P2P, prompt remoto de troca e câmera remota",
       "owner_agent": "01_arquiteto_hibrido.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Limpeza total ao voltar ao Setup, desabilitar peões/cores já escolhidos em tempo real no P2P, prompt remoto de troca e acompanhamento da câmera nos clientes."
     }
   ]

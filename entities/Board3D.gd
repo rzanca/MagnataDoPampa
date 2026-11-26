@@ -35,9 +35,9 @@ const TILE_ART_MORTGAGED_TINT: Color = Color(0.46, 0.43, 0.40, 1.0)
 
 const TOKEN_COLORS: Array[Color] = [
 	Color("#FF3B4E"),
-	Color("#1FC8A9"),
+	Color("#22C55E"),
 	Color("#FFCA3A"),
-	Color("#3A9BFF"),
+	Color("#2563EB"),
 	Color("#A45CFF"),
 	Color("#FF7A38")
 ]
@@ -60,6 +60,10 @@ var _tile_art_materials: Dictionary[int, StandardMaterial3D] = {}
 var _tile_default_colors: Array[Color] = []
 var _owner_overlays: Dictionary[int, Node3D] = {}
 var _building_overlays: Dictionary[int, Node3D] = {}
+var _tile_value_labels: Dictionary[int, Label3D] = {}
+var _tile_base_font_sizes: Dictionary[int, int] = {}
+var _owners_cache: Dictionary[int, int] = {}
+var _buildings_cache: Dictionary[int, int] = {}
 var _last_building_levels: Dictionary[int, int] = {}
 var _mortgaged_cache: Dictionary[int, bool] = {}
 
@@ -463,6 +467,10 @@ func build_board(tiles: Array[Dictionary]) -> void:
 	_tile_default_colors.clear()
 	_owner_overlays.clear()
 	_building_overlays.clear()
+	_tile_value_labels.clear()
+	_tile_base_font_sizes.clear()
+	_owners_cache.clear()
+	_buildings_cache.clear()
 	_mortgaged_cache.clear()
 	_flag_segments.clear()
 	_jail_beacon_mat = null
@@ -884,6 +892,8 @@ func _create_tile_3d(tile_idx: int, rect_xz: Rect2, tile_data: Dictionary) -> No
 		price_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 		price_lbl.position = layout["price_pos"]
 		root.add_child(price_lbl)
+		_tile_value_labels[tile_idx] = price_lbl
+		_tile_base_font_sizes[tile_idx] = int(layout["price_font_size"])
 
 	var owner_holder: Node3D = Node3D.new()
 	owner_holder.name = "OwnerOverlay"
@@ -1348,6 +1358,7 @@ func _compute_monopoly_tiles(owners_map: Dictionary[int, int]) -> Dictionary[int
 	return mono_tiles
 
 func update_ownership(owners_map: Dictionary[int, int], mortgaged_map: Dictionary[int, bool]) -> void:
+	_owners_cache = owners_map.duplicate()
 	_mortgaged_cache.clear()
 	var mono_tiles: Dictionary[int, bool] = _compute_monopoly_tiles(owners_map)
 	var mono_gold_mat: StandardMaterial3D = _make_vivid_material(Color("#FFD166"), 0.22, 0.70, 0.36)
@@ -1438,7 +1449,53 @@ func update_ownership(owners_map: Dictionary[int, int], mortgaged_map: Dictionar
 			hip_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 			overlay.add_child(hip_lbl)
 
+	_refresh_tile_value_labels(mono_tiles)
+
+func _refresh_tile_value_labels(mono_tiles_opt: Dictionary[int, bool] = {}) -> void:
+	var mono_tiles: Dictionary[int, bool] = mono_tiles_opt
+	if mono_tiles.is_empty() and not _owners_cache.is_empty():
+		mono_tiles = _compute_monopoly_tiles(_owners_cache)
+
+	for tile_idx: int in _tile_value_labels.keys():
+		if tile_idx < 0 or tile_idx >= _tiles_cache.size():
+			continue
+		var lbl: Label3D = _tile_value_labels[tile_idx]
+		if lbl == null or not is_instance_valid(lbl):
+			continue
+		var tile: Dictionary = _tiles_cache[tile_idx]
+		var tile_type: String = str(tile.get("type", ""))
+		if tile_type == "TAX":
+			continue
+
+		var base_fs: int = _tile_base_font_sizes.get(tile_idx, 36)
+		if not _owners_cache.has(tile_idx):
+			lbl.text = "R$%d" % int(tile.get("price", 0))
+			lbl.font_size = base_fs
+			lbl.modulate = Color("#F8D568")
+		elif _mortgaged_cache.get(tile_idx, false):
+			lbl.text = "HIPOT"
+			lbl.font_size = maxi(26, base_fs - 4)
+			lbl.modulate = Color("#FF758F")
+		elif tile_type == "COMPANY":
+			lbl.text = "Al.%dx" % int(tile.get("multiplier", 40))
+			lbl.font_size = maxi(26, base_fs - 4)
+			lbl.modulate = Color("#90E0EF")
+		elif tile_type == "PROPERTY":
+			var rent_list: Array = tile.get("rent", [])
+			var b_lvl: int = clampi(int(_buildings_cache.get(tile_idx, 0)), 0, maxi(0, rent_list.size() - 1))
+			var rent_val: int = int(rent_list[b_lvl]) if not rent_list.is_empty() else 0
+			var is_mono: bool = mono_tiles.get(tile_idx, false)
+			if b_lvl == 0 and is_mono:
+				rent_val *= 2
+			lbl.text = "Al.R$%d" % rent_val
+			lbl.font_size = maxi(26, base_fs - 5)
+			if b_lvl >= 5 or is_mono:
+				lbl.modulate = Color("#FFD166")
+			else:
+				lbl.modulate = Color("#7BF1A8")
+
 func update_buildings(buildings_map: Dictionary[int, int]) -> void:
+	_buildings_cache = buildings_map.duplicate()
 	var base_mat: StandardMaterial3D = _make_vivid_material(Color("#F0E9D6"), 0.46, 0.05, 0.08)
 	var house_mat: StandardMaterial3D = _make_vivid_material(Color("#22B573"), 0.30, 0.08, 0.18)
 	var door_mat: StandardMaterial3D = _make_vivid_material(Color("#2D1D14"), 0.52, 0.05, 0.02)
@@ -1552,6 +1609,7 @@ func update_buildings(buildings_map: Dictionary[int, int]) -> void:
 				overlay.add_child(house_node)
 				if should_pop and h == level - 1:
 					_animate_building_pop(house_node, final_pos, false)
+	_refresh_tile_value_labels()
 
 func _animate_building_pop(node: Node3D, final_pos: Vector3, is_hotel: bool = false) -> void:
 	node.scale = Vector3(0.10, 0.10, 0.10)
@@ -2052,20 +2110,28 @@ func animate_token_move(player_id: int, from_pos: int, steps: int, players: Arra
 		var target_pos: Vector3 = _get_token_slot_world_pos(0, current_tile, 1)
 		var start_pos: Vector3 = token.position
 		var mid_pos: Vector3 = start_pos.lerp(target_pos, 0.5)
-		mid_pos.y = TILE_TOP_Y + 0.56
+		mid_pos.y = TILE_TOP_Y + 0.72
 
 		# Câmera dinâmica acompanha suavemente o peão na Vista Isométrica (nunca interfere na Conferência 2D)
 		if not _is_2d_view and _camera_follow_enabled:
 			var is_last_hop: bool = (hop_idx == total_hops - 1)
-			_focus_camera_on_world_pos(target_pos, 0.72 if is_last_hop else 0.78, 0.20 if is_last_hop else 0.16)
+			_focus_camera_on_world_pos(target_pos, 0.72 if is_last_hop else 0.78, 0.22 if is_last_hop else 0.18)
 
 		var tw: Tween = create_tween()
 		_register_tween(tw)
-		tw.tween_property(token, "position", mid_pos, 0.065).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
-		tw.tween_property(token, "position", target_pos, 0.065).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+		tw.set_parallel(true)
+		tw.tween_property(token, "position:x", target_pos.x, 0.19).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_property(token, "position:z", target_pos.z, 0.19).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		tw.tween_property(token, "position:y", mid_pos.y, 0.095).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.tween_property(token, "scale", Vector3(0.94, 1.12, 0.94), 0.095).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_property(token, "position:y", target_pos.y, 0.095).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+		tw.parallel().tween_property(token, "scale", Vector3(1.06, 0.93, 1.06), 0.075).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+		tw.chain().tween_property(token, "scale", Vector3.ONE, 0.045).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		await tw.finished
 		if expected_token != _anim_token or not is_inside_tree():
 			return false
+		if hop_idx < total_hops - 1:
+			await get_tree().create_timer(0.025).timeout
 
 	update_token_positions(players)
 	if not _is_2d_view and _camera_follow_enabled:

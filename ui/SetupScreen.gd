@@ -39,9 +39,9 @@ const PAWN_OPTIONS: Array[Dictionary] = [
 
 const COLOR_OPTIONS: Array[Dictionary] = [
 	{ "name": "Vermelho", "hex": "#FF3B4E" },
-	{ "name": "Verde Mate", "hex": "#1FC8A9" },
+	{ "name": "Verde Pampa", "hex": "#22C55E" },
 	{ "name": "Ouro Pampa", "hex": "#FFCA3A" },
-	{ "name": "Azul Guaíba", "hex": "#3A9BFF" },
+	{ "name": "Azul Guaíba", "hex": "#2563EB" },
 	{ "name": "Roxo Vinhedo", "hex": "#A45CFF" },
 	{ "name": "Terracota", "hex": "#FF7A38" }
 ]

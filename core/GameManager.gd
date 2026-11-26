@@ -261,6 +261,7 @@ func _setup_visuals() -> void:
 	hud.property_selected.connect(_on_human_property_selected)
 	hud.build_pressed.connect(_on_human_build_pressed)
 	hud.sell_building_pressed.connect(_on_human_sell_building_pressed)
+	hud.build_cart_applied.connect(_on_human_build_cart_applied)
 	hud.mortgage_pressed.connect(_on_human_mortgage_pressed)
 	hud.end_turn_pressed.connect(_on_human_end_turn_pressed)
 	hud.trade_executed.connect(_on_human_trade_executed)
@@ -588,15 +589,23 @@ func _on_tile_inspected(tile_idx: int) -> void:
 	var group_name: String = str(tile.get("group", ""))
 	var has_monopoly: bool = is_owned and _has_monopoly(owner_id, group_name)
 
+	var active_pid: int = int(players[current_player_index].get("id", -1)) if (not players.is_empty() and current_player_index >= 0 and current_player_index < players.size()) else -1
 	var can_trade_this_tile: bool = (
 		is_owned
 		and not _is_auction_active()
 		and _can_open_trade()
 		and not _group_has_buildings(tile_idx)
-		and not players.is_empty()
-		and current_player_index >= 0
-		and current_player_index < players.size()
-		and owner_id != int(players[current_player_index].get("id", -1))
+		and active_pid >= 0
+		and owner_id != active_pid
+		and not _is_human_input_blocked()
+	)
+	var can_cart_this_tile: bool = (
+		is_owned
+		and not _is_auction_active()
+		and str(tile.get("type", "")) == "PROPERTY"
+		and has_monopoly
+		and active_pid >= 0
+		and owner_id == active_pid
 		and not _is_human_input_blocked()
 	)
 	var info: Dictionary = {
@@ -612,7 +621,8 @@ func _on_tile_inspected(tile_idx: int) -> void:
 		"is_mortgaged": mortgaged_tiles.get(tile_idx, false),
 		"building_level": property_buildings.get(tile_idx, 0),
 		"has_monopoly": has_monopoly,
-		"can_propose_trade": can_trade_this_tile
+		"can_propose_trade": can_trade_this_tile,
+		"can_open_build_cart": can_cart_this_tile
 	}
 	hud.show_deed_modal(info)
 
@@ -855,6 +865,14 @@ func _on_human_sell_building_pressed(tile_idx: int) -> void:
 		network.send_action_to_host("SELL_BUILDING", { "tile_index": tile_idx })
 		return
 	sell_building_on_property(tile_idx)
+
+func _on_human_build_cart_applied(target_levels: Dictionary) -> void:
+	if _is_human_input_blocked():
+		return
+	if _is_network_client():
+		network.send_action_to_host("BUILD_CART", { "levels": target_levels.duplicate(true) })
+		return
+	apply_construction_cart(target_levels)
 
 func _on_human_mortgage_pressed(tile_idx: int) -> void:
 	if _is_human_input_blocked():
@@ -1752,6 +1770,121 @@ func sell_building_on_property(tile_idx: int) -> void:
 		_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("warning")
+
+func apply_construction_cart(raw_target_levels: Dictionary) -> bool:
+	if not _match_active or _is_animating or _is_auction_active() or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+		return false
+	if players.is_empty() or current_player_index < 0 or current_player_index >= players.size():
+		return false
+	var player: Dictionary = players[current_player_index]
+	var pid: int = int(player["id"])
+	if bool(player.get("bankrupt", false)):
+		return false
+
+	var target_levels: Dictionary[int, int] = {}
+	for k: Variant in raw_target_levels.keys():
+		var tid: int = int(k)
+		if tid < 0 or tid >= tiles.size():
+			return false
+		target_levels[tid] = clampi(int(raw_target_levels[k]), 0, 5)
+
+	if target_levels.is_empty():
+		return false
+
+	# Agrupar por grupo de cor e validar monopólio, hipotecas, equilíbrio e estoque do Banco
+	var touched_groups: Dictionary[String, bool] = {}
+	for tid: int in target_levels.keys():
+		var tile: Dictionary = tiles[tid]
+		if str(tile.get("type", "")) != "PROPERTY":
+			return false
+		if property_owners.get(tid, -1) != pid:
+			return false
+		var g_name: String = str(tile.get("group", ""))
+		if not _has_monopoly(pid, g_name):
+			return false
+		touched_groups[g_name] = true
+
+	var net_cost: int = 0
+	var houses_delta: int = 0
+	var hotels_delta: int = 0
+	var changes_count: int = 0
+
+	for g_name: String in touched_groups.keys():
+		var g_indices: Array[int] = _get_group_tile_indices(g_name)
+		var any_mort: bool = false
+		for g_idx: int in g_indices:
+			if mortgaged_tiles.get(g_idx, false):
+				any_mort = true
+				break
+
+		var min_lvl: int = 99
+		var max_lvl: int = -1
+		for g_idx: int in g_indices:
+			var old_lvl: int = clampi(property_buildings.get(g_idx, 0), 0, 5)
+			var new_lvl: int = target_levels.get(g_idx, old_lvl)
+			if any_mort and new_lvl > old_lvl:
+				_log_both("Carrinho recusado: desipoteque todo o grupo %s antes de construir." % g_name)
+				return false
+			min_lvl = mini(min_lvl, new_lvl)
+			max_lvl = maxi(max_lvl, new_lvl)
+			if new_lvl != old_lvl:
+				changes_count += 1
+				var tile: Dictionary = tiles[g_idx]
+				var h_cost: int = int(tile.get("house_cost", 50))
+				var sell_unit: int = _get_building_sell_value(tile)
+				if new_lvl > old_lvl:
+					net_cost += (new_lvl - old_lvl) * h_cost
+				else:
+					net_cost -= (old_lvl - new_lvl) * sell_unit
+
+				var old_h: int = old_lvl if old_lvl <= 4 else 0
+				var old_ht: int = 1 if old_lvl >= 5 else 0
+				var new_h: int = new_lvl if new_lvl <= 4 else 0
+				var new_ht: int = 1 if new_lvl >= 5 else 0
+				houses_delta += (new_h - old_h)
+				hotels_delta += (new_ht - old_ht)
+
+		if max_lvl - min_lvl > 1:
+			_log_both("Carrinho recusado: mantenha o equilíbrio entre os terrenos do grupo %s." % g_name)
+			return false
+
+	if changes_count == 0:
+		return false
+	if bank_houses_left - houses_delta < 0 or bank_hotels_left - hotels_delta < 0:
+		_log_both("Carrinho recusado: estoque insuficiente de casas/hotéis no Banco (32C / 12H).")
+		return false
+	if int(player["money"]) - net_cost < 0:
+		_log_both("Carrinho recusado: saldo insuficiente para confirmar as obras.")
+		return false
+
+	# Aplicar todas as alterações em lote de forma atômica
+	bank_houses_left -= houses_delta
+	bank_hotels_left -= hotels_delta
+	player["money"] = int(player["money"]) - net_cost
+	if int(player["money"]) >= 0:
+		_last_creditor_id = -1
+
+	for tid: int in target_levels.keys():
+		var new_lvl: int = target_levels[tid]
+		if new_lvl <= 0:
+			property_buildings.erase(tid)
+		else:
+			property_buildings[tid] = new_lvl
+		if board_view != null:
+			_broadcast_tile_pulse(tid, Color("#FFD166") if new_lvl >= 5 else Color("#52B788"), "HOTEL!" if new_lvl >= 5 else "OBRAS!")
+
+	if board_view != null:
+		board_view.update_buildings(property_buildings)
+
+	var verb_txt: String = "investiu R$ %d" % net_cost if net_cost >= 0 else "recebeu R$ %d em demolicoes" % absi(net_cost)
+	_log_both("%s confirmou carrinho de obras (%d lotes atualizados, %s)." % [str(player["name"]), changes_count, verb_txt])
+	_check_post_liquidation_bankruptcy(player)
+	if current_state != TurnState.GAME_OVER:
+		_sync_hud()
+	if hud != null:
+		hud.flash_action_feedback("positive" if net_cost >= 0 else "warning")
+	_broadcast_toast_event("Obras Confirmadas!", "%s atualizou %d lote(s) (%s)." % [str(player["name"]), changes_count, verb_txt], "build")
+	return true
 
 func toggle_mortgage(tile_idx: int) -> void:
 	var player: Dictionary = players[current_player_index]
@@ -3297,6 +3430,10 @@ func _on_network_client_action(sender_peer_id: int, session_id: int, action_name
 			build_on_property(int(params.get("tile_index", -1)))
 		"SELL_BUILDING":
 			sell_building_on_property(int(params.get("tile_index", -1)))
+		"BUILD_CART":
+			var raw_lvls: Variant = params.get("levels", {})
+			if raw_lvls is Dictionary:
+				apply_construction_cart(raw_lvls as Dictionary)
 		"MORTGAGE":
 			toggle_mortgage(int(params.get("tile_index", -1)))
 		"TRADE":
