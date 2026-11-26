@@ -55,7 +55,7 @@
       "id": "LOTE-04",
       "title": "Reset pós-partida, seleção exclusiva no P2P, prompt remoto de troca e câmera remota",
       "owner_agent": "01_arquiteto_hibrido.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Limpeza total ao voltar ao Setup, desabilitar peões/cores já escolhidos em tempo real no P2P, prompt remoto de troca e acompanhamento da câmera nos clientes."
     }
   ]

@@ -4067,6 +4067,25 @@ func hide_all_modals() -> void:
 	hide_victory_modal()
 	hide_event_toast()
 
+func reset_hud_state() -> void:
+	hide_all_modals()
+	clear_log()
+	_cached_players.clear()
+	_cached_current_idx = 0
+	_cached_player_colors.clear()
+	_cached_owned_options.clear()
+	_cached_selected_tile = -1
+	_cached_owners_map.clear()
+	_cached_buildings_map.clear()
+	_cached_mortgaged_map.clear()
+	_cached_tradable_map.clear()
+	_cart_draft_levels.clear()
+	_cart_focus_group = ""
+	_cached_houses_left = 32
+	_cached_hotels_left = 12
+	_cached_is_bot_turn = false
+	_switch_tab(TAB_PLAYERS)
+
 func hide_event_toast() -> void:
 	if _toast_tween != null and _toast_tween.is_valid():
 		_toast_tween.kill()

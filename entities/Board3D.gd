@@ -92,6 +92,8 @@ var _is_2d_view: bool = false
 var _camera_follow_enabled: bool = true
 var _hovered_tile: int = -1
 var _anim_token: int = 0
+var _moving_player_id: int = -1
+var _latest_players_snapshot: Array[Dictionary] = []
 var _camera_tween: Tween = null
 var _camera_return_tween: Tween = null
 var _token_pose_tweens: Array[Tween] = []
@@ -406,6 +408,8 @@ func toggle_camera_view() -> bool:
 
 func cancel_animations() -> void:
 	_anim_token += 1
+	_moving_player_id = -1
+	_latest_players_snapshot.clear()
 	_kill_camera_tweens()
 	for tw: Tween in _active_tweens:
 		if tw != null and tw.is_valid():
@@ -420,6 +424,28 @@ func cancel_animations() -> void:
 	_apply_camera_pose_immediate(_is_2d_view)
 	if _anim_card_node != null:
 		_anim_card_node.visible = false
+
+func reset_board_state() -> void:
+	cancel_animations()
+	set_active_player(-1)
+	for token: Node3D in _token_nodes.values():
+		if token != null and is_instance_valid(token):
+			token.queue_free()
+	_token_nodes.clear()
+	_token_medallions.clear()
+	_token_stems.clear()
+	_token_halos.clear()
+	_token_jail_rings.clear()
+	_jailed_player_ids.clear()
+	_player_colors.clear()
+	_last_building_levels.clear()
+	_total_players_count = 0
+	var empty_owners: Dictionary[int, int] = {}
+	var empty_mortgaged: Dictionary[int, bool] = {}
+	var empty_buildings: Dictionary[int, int] = {}
+	update_ownership(empty_owners, empty_mortgaged)
+	update_buildings(empty_buildings)
+	reset_camera_framing(false)
 
 func _register_tween(tw: Tween) -> void:
 	var alive: Array[Tween] = []
@@ -2036,6 +2062,7 @@ func _get_token_slot_world_pos(slot_idx: int, tile_idx: int, occupants_count: in
 func update_token_positions(players: Array[Dictionary]) -> void:
 	if _tile_centers_3d.is_empty():
 		return
+	_latest_players_snapshot = players.duplicate(true)
 	_total_players_count = players.size()
 	_jailed_player_ids.clear()
 	var tile_groups: Dictionary[int, Array] = {}
@@ -2076,18 +2103,24 @@ func update_token_positions(players: Array[Dictionary]) -> void:
 		var occ_count: int = occupants.size()
 		for occ_i: int in range(occ_count):
 			var pid: int = int(occupants[occ_i])
+			if pid == _moving_player_id:
+				continue
 			var token: Node3D = _token_nodes[pid]
 			token.position = _get_token_slot_world_pos(occ_i, tile_idx, occ_count)
 
 	var inmate_count: int = jail_inmates.size()
 	for in_i: int in range(inmate_count):
 		var in_pid: int = jail_inmates[in_i]
+		if in_pid == _moving_player_id:
+			continue
 		var in_token: Node3D = _token_nodes[in_pid]
 		in_token.position = _get_jail_cell_slot_world_pos(in_i, inmate_count)
 
 	var visit_count: int = jail_visitors.size()
 	for v_i: int in range(visit_count):
 		var v_pid: int = jail_visitors[v_i]
+		if v_pid == _moving_player_id:
+			continue
 		var v_token: Node3D = _token_nodes[v_pid]
 		v_token.position = _get_jail_visit_slot_world_pos(v_i, visit_count)
 
@@ -2097,6 +2130,8 @@ func animate_token_move(player_id: int, from_pos: int, steps: int, players: Arra
 		return true
 
 	var expected_token: int = _anim_token
+	_moving_player_id = player_id
+	_latest_players_snapshot = players.duplicate(true)
 	var token: Node3D = _token_nodes[player_id]
 	var board_len: int = _tile_centers_3d.size()
 	var step_dir: int = 1 if steps >= 0 else -1
@@ -2105,6 +2140,8 @@ func animate_token_move(player_id: int, from_pos: int, steps: int, players: Arra
 	var current_tile: int = from_pos
 	for hop_idx: int in range(total_hops):
 		if expected_token != _anim_token or not is_inside_tree():
+			if _moving_player_id == player_id:
+				_moving_player_id = -1
 			return false
 		current_tile = posmod(current_tile + step_dir, board_len)
 		var target_pos: Vector3 = _get_token_slot_world_pos(0, current_tile, 1)
@@ -2129,11 +2166,15 @@ func animate_token_move(player_id: int, from_pos: int, steps: int, players: Arra
 		tw.chain().tween_property(token, "scale", Vector3.ONE, 0.045).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 		await tw.finished
 		if expected_token != _anim_token or not is_inside_tree():
+			if _moving_player_id == player_id:
+				_moving_player_id = -1
 			return false
 		if hop_idx < total_hops - 1:
 			await get_tree().create_timer(0.025).timeout
 
-	update_token_positions(players)
+	if _moving_player_id == player_id:
+		_moving_player_id = -1
+	update_token_positions(_latest_players_snapshot if not _latest_players_snapshot.is_empty() else players)
 	if not _is_2d_view and _camera_follow_enabled:
 		_schedule_camera_overview_return(0.55)
 	return true

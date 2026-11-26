@@ -294,6 +294,7 @@ func _setup_visuals() -> void:
 	network.connection_failed_error.connect(_on_network_error)
 	network.host_disconnected.connect(_on_network_host_disconnected)
 	network.client_action_received.connect(_on_network_client_action)
+	network.client_lobby_pref_received.connect(_on_network_client_lobby_pref)
 	network.remote_match_started.connect(_on_network_remote_match_started)
 	network.remote_state_received.connect(_on_network_remote_state_received)
 	network.remote_event_received.connect(_on_network_remote_event_received)
@@ -314,6 +315,7 @@ func _setup_visuals() -> void:
 	setup_screen.join_web_room_requested.connect(_on_join_web_room_requested)
 	setup_screen.disconnect_network_requested.connect(_on_disconnect_network_requested)
 	setup_screen.lobby_config_changed.connect(_on_lobby_config_changed)
+	setup_screen.lobby_slot_pref_requested.connect(_on_setup_lobby_pref_requested)
 
 func _on_board_layout_updated(board_rect: Rect2) -> void:
 	if board_view != null:
@@ -421,6 +423,41 @@ func toggle_camera_view() -> void:
 	if hud != null:
 		hud.set_camera_mode_label(is_2d)
 
+func _reset_match_state() -> void:
+	_match_session_token += 1
+	_bot_turn_token += 1
+	_auction_bot_token += 1
+	_is_bot_thinking = false
+	_is_animating = false
+	_match_active = false
+	players.clear()
+	property_owners.clear()
+	property_buildings.clear()
+	mortgaged_tiles.clear()
+	bank_houses_left = int(board_config.get("max_houses_bank", 32))
+	bank_hotels_left = int(board_config.get("max_hotels_bank", 12))
+	current_player_index = 0
+	current_state = TurnState.WAITING_ROLL
+	doubles_count = 0
+	current_round = 1
+	_acted_in_current_round.clear()
+	_bot_traded_this_turn = false
+	_selected_property_tile = -1
+	_has_extra_roll = false
+	_last_dice_sum = 0
+	_last_creditor_id = -1
+	_pending_trade_offer.clear()
+	_auction_state.clear()
+	_pending_periodic_auction = false
+	_last_victory_info.clear()
+	_last_tile_summary = "Configure a partida para começar"
+	_reset_chance_deck()
+	if board_view != null:
+		board_view.reset_board_state()
+	if hud != null:
+		hud.reset_hud_state()
+		hud.set_match_ui_visible(false)
+
 func open_setup_screen() -> void:
 	var was_match_active: bool = _match_active
 	if network != null:
@@ -431,22 +468,7 @@ func open_setup_screen() -> void:
 		elif network.is_client() and was_match_active:
 			network.disconnect_network("Você saiu da sala online.")
 
-	_match_session_token += 1
-	_bot_turn_token += 1
-	_auction_bot_token += 1
-	_is_bot_thinking = false
-	_is_animating = false
-	_match_active = false
-	_pending_trade_offer.clear()
-	_auction_state.clear()
-	_pending_periodic_auction = false
-	_last_victory_info.clear()
-	if board_view != null:
-		board_view.cancel_animations()
-		board_view.set_active_player(-1)
-	if hud != null:
-		hud.hide_all_modals()
-		hud.set_match_ui_visible(false)
+	_reset_match_state()
 	if setup_screen != null:
 		setup_screen.open_screen()
 		if network != null and network.is_host():
@@ -2076,6 +2098,13 @@ func move_player(player: Dictionary, steps: int, allow_pass_go: bool = true, dic
 	var new_pos: int = posmod(old_pos + steps, size)
 
 	player["position"] = new_pos
+	if _is_network_host():
+		network.broadcast_match_event(_active_net_session_id, "PAWN_MOVE", {
+			"player_id": int(player["id"]),
+			"from_pos": old_pos,
+			"steps": steps,
+			"to_pos": new_pos
+		})
 	if board_view != null:
 		var move_ok: bool = await board_view.animate_token_move(int(player["id"]), old_pos, steps, players)
 		if not move_ok or session_token != _match_session_token or not _match_active:
@@ -3113,6 +3142,16 @@ func _on_lobby_config_changed() -> void:
 	if _is_network_host() and not _match_active:
 		_broadcast_current_lobby()
 
+func _on_setup_lobby_pref_requested(pawn_idx: int, color_idx: int) -> void:
+	if _is_network_client() and not _match_active and network != null:
+		network.send_lobby_pref_to_host(pawn_idx, color_idx)
+
+func _on_network_client_lobby_pref(sender_peer_id: int, pawn_idx: int, color_idx: int) -> void:
+	if not _is_network_host() or _match_active or setup_screen == null:
+		return
+	var _applied: bool = setup_screen.apply_remote_peer_selection(sender_peer_id, pawn_idx, color_idx)
+	_broadcast_current_lobby()
+
 func _broadcast_current_lobby() -> void:
 	if not _is_network_host() or setup_screen == null:
 		return
@@ -3338,6 +3377,17 @@ func _on_network_remote_event_received(session_id: int, event_type: String, payl
 		"DICE_ANIM":
 			if board_view != null:
 				board_view.play_dice_roll(int(payload.get("d1", 1)), int(payload.get("d2", 1)))
+		"PAWN_MOVE":
+			var move_pid: int = int(payload.get("player_id", -1))
+			var from_pos: int = int(payload.get("from_pos", 0))
+			var steps: int = int(payload.get("steps", 0))
+			var to_pos: int = int(payload.get("to_pos", posmod(from_pos + steps, maxi(1, tiles.size()))))
+			for p: Dictionary in players:
+				if int(p.get("id", -1)) == move_pid:
+					p["position"] = to_pos
+					break
+			if board_view != null and move_pid >= 0:
+				board_view.animate_token_move(move_pid, from_pos, steps, players)
 		"TILE_PULSE":
 			if board_view != null:
 				board_view.play_tile_pulse(int(payload.get("tile", 0)), Color(str(payload.get("color_hex", "#F5CA5C"))), str(payload.get("text", "")))
@@ -3359,19 +3409,13 @@ func _on_network_remote_event_received(session_id: int, event_type: String, payl
 				})
 		"TRADE_OFFER":
 			if hud != null:
+				hud.hide_trade_modal()
 				hud.show_trade_confirm_modal(payload.duplicate(true))
 		"TRADE_OFFER_CLOSED":
 			if hud != null:
 				hud.hide_trade_confirm_modal()
 		"RETURN_TO_LOBBY":
-			_match_active = false
-			_is_animating = false
-			if board_view != null:
-				board_view.cancel_animations()
-				board_view.set_active_player(-1)
-			if hud != null:
-				hud.hide_all_modals()
-				hud.set_match_ui_visible(false)
+			_reset_match_state()
 			if setup_screen != null:
 				setup_screen.open_screen()
 				var reason: String = str(payload.get("reason", "O Host retornou à sala."))

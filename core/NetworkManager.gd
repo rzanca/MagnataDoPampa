@@ -23,6 +23,7 @@ signal connection_failed_error(message: String)
 signal host_disconnected(reason: String)
 
 signal client_action_received(sender_peer_id: int, session_id: int, action_name: String, params: Dictionary)
+signal client_lobby_pref_received(sender_peer_id: int, pawn_idx: int, color_idx: int)
 signal remote_match_started(session_id: int, snapshot: Dictionary)
 signal remote_state_received(session_id: int, snapshot: Dictionary)
 signal remote_event_received(session_id: int, event_type: String, payload: Dictionary)
@@ -752,6 +753,13 @@ func send_action_to_host(action_name: String, params: Dictionary = {}) -> void:
 		return
 	_rpc_request_action.rpc_id(1, active_session_id, action_name, params)
 
+func send_lobby_pref_to_host(pawn_idx: int, color_idx: int) -> void:
+	if not is_client() or multiplayer == null or not multiplayer.has_multiplayer_peer():
+		return
+	if multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
+		return
+	_rpc_set_lobby_pref.rpc_id(1, pawn_idx, color_idx)
+
 # --- Callbacks do MultiplayerAPI (ENet e WebRTC Estrela) ---
 
 func _on_peer_connected(peer_id: int) -> void:
@@ -913,3 +921,12 @@ func _rpc_request_action(session_id: int, action_name: String, params: Dictionar
 	if session_id != active_session_id:
 		return
 	client_action_received.emit(sender_id, session_id, action_name, params)
+
+@rpc("any_peer", "reliable")
+func _rpc_set_lobby_pref(pawn_idx: int, color_idx: int) -> void:
+	if not is_host():
+		return
+	var sender_id: int = multiplayer.get_remote_sender_id()
+	if sender_id <= 1:
+		return
+	client_lobby_pref_received.emit(sender_id, pawn_idx, color_idx)

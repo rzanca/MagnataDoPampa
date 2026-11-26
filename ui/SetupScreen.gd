@@ -9,6 +9,7 @@ signal host_web_room_requested(signaling_url: String, player_name: String, turn_
 signal join_web_room_requested(signaling_url: String, room_code: String, player_name: String, turn_cfg: Dictionary)
 signal disconnect_network_requested
 signal lobby_config_changed
+signal lobby_slot_pref_requested(pawn_idx: int, color_idx: int)
 
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
@@ -136,6 +137,9 @@ func open_screen() -> void:
 	visible = true
 	if _error_label != null:
 		_error_label.text = ""
+	_updating_slots = false
+	_refresh_visible_slots()
+	_refresh_exclusive_choices()
 	_on_viewport_size_changed()
 
 func close_screen() -> void:
@@ -846,6 +850,8 @@ func _set_player_count(new_count: int) -> void:
 	_player_count = clampi(new_count, min_allowed, MAX_PLAYERS)
 	_refresh_count_buttons()
 	_refresh_visible_slots()
+	_deduplicate_active_slot_choices()
+	_refresh_exclusive_choices()
 	if _net_mode == 1:
 		lobby_config_changed.emit()
 
@@ -978,51 +984,197 @@ func _toggle_slot_type(slot_idx: int) -> void:
 		if current_name == "" or _is_generic_bot_name(current_name):
 			_slot_name_edits[slot_idx].text = "Jogador %d" % (slot_idx + 1)
 
-func _cycle_slot_pawn(slot_idx: int) -> void:
-	if _net_mode == 2:
+func _is_pawn_taken_by_other_active(slot_idx: int, pawn_idx: int) -> bool:
+	for j: int in range(_player_count):
+		if j != slot_idx and j < _slot_pawn_indices.size() and _slot_pawn_indices[j] == pawn_idx:
+			return true
+	return false
+
+func _is_color_taken_by_other_active(slot_idx: int, color_idx: int) -> bool:
+	for j: int in range(_player_count):
+		if j != slot_idx and j < _slot_color_indices.size() and _slot_color_indices[j] == color_idx:
+			return true
+	return false
+
+func _can_edit_slot_choices(slot_idx: int) -> bool:
+	if _net_mode != 2:
+		return true
+	return slot_idx < _player_count and (not _slot_is_bot[slot_idx]) and (_slot_peer_ids[slot_idx] == _local_peer_id)
+
+func _deduplicate_active_slot_choices() -> void:
+	var used_pawns: Array[int] = []
+	var used_colors: Array[int] = []
+	for i: int in range(_player_count):
+		if i < _slot_pawn_indices.size():
+			var p_idx: int = _slot_pawn_indices[i]
+			if p_idx in used_pawns:
+				for alt_p: int in range(PAWN_OPTIONS.size()):
+					if not (alt_p in used_pawns):
+						_assign_unique_slot_value(_slot_pawn_indices, i, alt_p)
+						p_idx = alt_p
+						break
+			used_pawns.append(p_idx)
+		if i < _slot_color_indices.size():
+			var c_idx: int = _slot_color_indices[i]
+			if c_idx in used_colors:
+				for alt_c: int in range(COLOR_OPTIONS.size()):
+					if not (alt_c in used_colors):
+						_assign_unique_slot_value(_slot_color_indices, i, alt_c)
+						c_idx = alt_c
+						break
+			used_colors.append(c_idx)
+	for i: int in range(MAX_PLAYERS):
+		if i < _slot_pawn_selects.size():
+			_slot_pawn_selects[i].select(_slot_pawn_indices[i])
+		_refresh_slot_pawn_visual(i)
+		_refresh_slot_color_visuals(i)
+
+func _assign_unique_slot_value(arr: Array[int], slot_idx: int, new_val: int) -> void:
+	var old_val: int = arr[slot_idx]
+	if old_val == new_val:
 		return
-	var next_idx: int = (_slot_pawn_indices[slot_idx] + 1) % PAWN_OPTIONS.size()
-	_slot_pawn_selects[slot_idx].select(next_idx)
-	_on_slot_pawn_changed(slot_idx, next_idx)
+	for other_idx: int in range(arr.size()):
+		if other_idx != slot_idx and arr[other_idx] == new_val:
+			arr[other_idx] = old_val
+			break
+	arr[slot_idx] = new_val
+
+func _refresh_exclusive_choices() -> void:
+	var online: bool = (_net_mode != 0)
+	for i: int in range(MAX_PLAYERS):
+		var can_edit: bool = _can_edit_slot_choices(i)
+		var pawn_sel: OptionButton = _slot_pawn_selects[i]
+		pawn_sel.disabled = not can_edit
+		for p_i: int in range(PAWN_OPTIONS.size()):
+			var base_name: String = str(PAWN_OPTIONS[p_i]["name"])
+			var taken: bool = online and _is_pawn_taken_by_other_active(i, p_i)
+			pawn_sel.set_item_disabled(p_i, taken)
+			pawn_sel.set_item_text(p_i, ("%s (em uso)" % base_name) if taken else base_name)
+
+		var swatches: Array = _slot_color_buttons[i]
+		for c_i: int in range(swatches.size()):
+			var sw_btn: Button = swatches[c_i] as Button
+			var c_name: String = str(COLOR_OPTIONS[c_i]["name"])
+			var taken_c: bool = online and _is_color_taken_by_other_active(i, c_i)
+			sw_btn.disabled = (not can_edit) or taken_c
+			sw_btn.modulate = Color(0.45, 0.45, 0.45, 0.48) if taken_c else Color.WHITE
+			sw_btn.tooltip_text = ("%s (em uso)" % c_name) if taken_c else c_name
+
+func _cycle_slot_pawn(slot_idx: int) -> void:
+	if _net_mode == 2 and not _can_edit_slot_choices(slot_idx):
+		return
+	for step: int in range(1, PAWN_OPTIONS.size() + 1):
+		var candidate: int = (_slot_pawn_indices[slot_idx] + step) % PAWN_OPTIONS.size()
+		if _net_mode != 0 and _is_pawn_taken_by_other_active(slot_idx, candidate):
+			continue
+		_slot_pawn_selects[slot_idx].select(candidate)
+		_on_slot_pawn_changed(slot_idx, candidate)
+		return
 
 func _on_slot_pawn_changed(slot_idx: int, new_pawn_idx: int) -> void:
-	if _updating_slots or _net_mode == 2:
+	if _updating_slots:
 		return
+	var clamped_p: int = clampi(new_pawn_idx, 0, PAWN_OPTIONS.size() - 1)
+	if _net_mode == 2:
+		if not _can_edit_slot_choices(slot_idx) or _is_pawn_taken_by_other_active(slot_idx, clamped_p):
+			_updating_slots = true
+			_slot_pawn_selects[slot_idx].select(_slot_pawn_indices[slot_idx])
+			_updating_slots = false
+			return
+		_updating_slots = true
+		_slot_pawn_indices[slot_idx] = clamped_p
+		_refresh_slot_pawn_visual(slot_idx)
+		_refresh_exclusive_choices()
+		_updating_slots = false
+		lobby_slot_pref_requested.emit(clamped_p, _slot_color_indices[slot_idx])
+		return
+
+	if _net_mode == 1 and _is_pawn_taken_by_other_active(slot_idx, clamped_p):
+		_updating_slots = true
+		_slot_pawn_selects[slot_idx].select(_slot_pawn_indices[slot_idx])
+		_updating_slots = false
+		return
+
 	var old_pawn_idx: int = _slot_pawn_indices[slot_idx]
-	if old_pawn_idx == new_pawn_idx:
+	if old_pawn_idx == clamped_p:
 		return
 
 	_updating_slots = true
 	for other_idx: int in range(MAX_PLAYERS):
-		if other_idx != slot_idx and _slot_pawn_indices[other_idx] == new_pawn_idx:
+		if other_idx != slot_idx and _slot_pawn_indices[other_idx] == clamped_p:
 			_slot_pawn_indices[other_idx] = old_pawn_idx
 			_slot_pawn_selects[other_idx].select(old_pawn_idx)
 			_refresh_slot_pawn_visual(other_idx)
 			break
-	_slot_pawn_indices[slot_idx] = new_pawn_idx
+	_slot_pawn_indices[slot_idx] = clamped_p
 	_refresh_slot_pawn_visual(slot_idx)
+	_refresh_exclusive_choices()
 	_updating_slots = false
 	if _net_mode == 1:
 		lobby_config_changed.emit()
 
 func _on_slot_color_changed(slot_idx: int, new_color_idx: int) -> void:
-	if _updating_slots or _net_mode == 2:
+	if _updating_slots:
 		return
+	var clamped_c: int = clampi(new_color_idx, 0, COLOR_OPTIONS.size() - 1)
+	if _net_mode == 2:
+		if not _can_edit_slot_choices(slot_idx) or _is_color_taken_by_other_active(slot_idx, clamped_c):
+			return
+		_updating_slots = true
+		_slot_color_indices[slot_idx] = clamped_c
+		_refresh_slot_color_visuals(slot_idx)
+		_refresh_exclusive_choices()
+		_updating_slots = false
+		lobby_slot_pref_requested.emit(_slot_pawn_indices[slot_idx], clamped_c)
+		return
+
+	if _net_mode == 1 and _is_color_taken_by_other_active(slot_idx, clamped_c):
+		return
+
 	var old_color_idx: int = _slot_color_indices[slot_idx]
-	if old_color_idx == new_color_idx:
+	if old_color_idx == clamped_c:
 		return
 
 	_updating_slots = true
 	for other_idx: int in range(MAX_PLAYERS):
-		if other_idx != slot_idx and _slot_color_indices[other_idx] == new_color_idx:
+		if other_idx != slot_idx and _slot_color_indices[other_idx] == clamped_c:
 			_slot_color_indices[other_idx] = old_color_idx
 			_refresh_slot_color_visuals(other_idx)
 			break
-	_slot_color_indices[slot_idx] = new_color_idx
+	_slot_color_indices[slot_idx] = clamped_c
 	_refresh_slot_color_visuals(slot_idx)
+	_refresh_exclusive_choices()
 	_updating_slots = false
 	if _net_mode == 1:
 		lobby_config_changed.emit()
+
+func apply_remote_peer_selection(sender_peer_id: int, pawn_idx: int, color_idx: int) -> bool:
+	if _net_mode != 1:
+		return false
+	var target_slot: int = -1
+	for i: int in range(_player_count):
+		if not _slot_is_bot[i] and _slot_peer_ids[i] == sender_peer_id:
+			target_slot = i
+			break
+	if target_slot < 0:
+		return false
+
+	var changed: bool = false
+	var safe_p: int = clampi(pawn_idx, 0, PAWN_OPTIONS.size() - 1)
+	var safe_c: int = clampi(color_idx, 0, COLOR_OPTIONS.size() - 1)
+	_updating_slots = true
+	if safe_p != _slot_pawn_indices[target_slot] and not _is_pawn_taken_by_other_active(target_slot, safe_p):
+		_assign_unique_slot_value(_slot_pawn_indices, target_slot, safe_p)
+		_slot_pawn_selects[target_slot].select(safe_p)
+		_refresh_slot_pawn_visual(target_slot)
+		changed = true
+	if safe_c != _slot_color_indices[target_slot] and not _is_color_taken_by_other_active(target_slot, safe_c):
+		_assign_unique_slot_value(_slot_color_indices, target_slot, safe_c)
+		_refresh_slot_color_visuals(target_slot)
+		changed = true
+	_refresh_exclusive_choices()
+	_updating_slots = false
+	return changed
 
 func _on_start_pressed() -> void:
 	if _net_mode == 2:
@@ -1298,6 +1450,7 @@ func set_network_status(mode: int, status_text: String, connected_peers: Array[D
 			_refresh_slot_type_button(i)
 		for cb: Button in _count_buttons:
 			cb.disabled = false
+		_refresh_exclusive_choices()
 
 	_refresh_start_cta_for_network()
 
@@ -1326,10 +1479,10 @@ func _sync_host_slots_with_peers() -> void:
 			if cur_n == "" or _is_default_human_name(cur_n):
 				_slot_name_edits[i].text = _pick_unused_generic_bot_name(i)
 			_slot_name_edits[i].editable = true
-		_slot_pawn_selects[i].disabled = false
-		for sw_var: Variant in _slot_color_buttons[i]:
-			(sw_var as Button).disabled = false
 		_refresh_slot_type_button(i)
+
+	_deduplicate_active_slot_choices()
+	_refresh_exclusive_choices()
 
 	for idx: int in range(_count_buttons.size()):
 		var n: int = MIN_PLAYERS + idx
@@ -1395,11 +1548,9 @@ func apply_remote_lobby_snapshot(lobby_data: Dictionary, local_peer_id: int) -> 
 			_slot_pawn_indices[i] = p_idx
 			_slot_color_indices[i] = c_idx
 			_slot_pawn_selects[i].select(p_idx)
-			_slot_pawn_selects[i].disabled = true
-			for sw_var: Variant in _slot_color_buttons[i]:
-				(sw_var as Button).disabled = true
 			_refresh_slot_pawn_visual(i)
 			_refresh_slot_color_visuals(i)
 			_refresh_slot_type_button(i)
+	_refresh_exclusive_choices()
 	_updating_slots = false
 	_refresh_start_cta_for_network()
