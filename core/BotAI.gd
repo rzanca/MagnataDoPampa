@@ -586,7 +586,8 @@ func evaluate_bot_trade_offer(
 	cash_delta: int,
 	board_state: Dictionary,
 	round_number: int,
-	market_push: bool
+	market_push: bool,
+	rent_waiver_rounds: int = 0
 ) -> bool:
 	if bool(receiver.get("bankrupt", false)) or bool(proposer.get("bankrupt", false)):
 		return false
@@ -687,6 +688,18 @@ func evaluate_bot_trade_offer(
 	# Se o destinatário está com caixa apertado (< R$ 450), valoriza liquidez em dinheiro vivo
 	if cash_delta > 0 and receiver_money < 450:
 		received_val += float(cash_delta) * 0.22
+
+	if rent_waiver_rounds > 0:
+		var proposer_owned: int = 0
+		var receiver_owned: int = 0
+		for owner_val: Variant in owners_map.values():
+			var opid: int = int(owner_val)
+			if _is_same_side(opid, proposer_id, teams_map):
+				proposer_owned += 1
+			elif _is_same_side(opid, receiver_id, teams_map):
+				receiver_owned += 1
+		var pact_bonus: float = 45.0 if receiver_owned <= proposer_owned + 1 else 15.0
+		received_val += pact_bonus
 
 	var required_margin: float = 1.05
 	match profile:

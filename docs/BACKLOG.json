@@ -167,14 +167,14 @@
       "id": "LOTE-20",
       "title": "Contratos de Parceria / Arrendamento Temporário (isenção de aluguel por 3 rodadas em trocas)",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Adicionar pacto opcional de isenção mútua de aluguel por 3 rodadas nas trocas de GameManager, BotAI e GameHUD."
     },
     {
       "id": "LOTE-21",
       "title": "Missões Secretas na Estância Dinâmica + Troféus de Carreira persistentes",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Objetivos ocultos com recompensa única (+600 Pilas) e conquistas persistidas em user://achievements.cfg com modal de Troféus."
     },
     {

@@ -11,7 +11,7 @@ signal sell_building_pressed(tile_index: int)
 signal mortgage_pressed(tile_index: int)
 signal build_cart_applied(target_levels: Dictionary)
 signal end_turn_pressed
-signal trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_delta: int)
+signal trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_delta: int, rent_waiver_rounds: int)
 signal trade_offer_responded(offer_id: int, accepted: bool)
 signal auction_bid_submitted(bid_amount: int)
 signal auction_pass_submitted
@@ -160,12 +160,15 @@ var _trade_deliver_preview: Label
 var _trade_receive_preview: Label
 var _trade_summary_label: Label
 var _trade_confirm_btn: Button
+var _trade_waiver_btn: Button
 var _trade_cash_value: int = 0
+var _trade_waiver_enabled: bool = false
 
 var _trade_confirm_overlay: Control
 var _trade_confirm_title_label: Label
 var _trade_confirm_gives_label: Label
 var _trade_confirm_receives_label: Label
+var _trade_confirm_pact_label: Label
 var _trade_confirm_offer_id: int = -1
 
 var _auction_overlay: Control
@@ -1893,6 +1896,18 @@ func _build_trade_modal() -> void:
 			s_btn.pressed.connect(func() -> void: _adjust_trade_cash(delta_ref))
 		step_row.add_child(s_btn)
 
+	_trade_waiver_btn = Button.new()
+	_trade_waiver_btn.toggle_mode = true
+	_trade_waiver_btn.button_pressed = false
+	_trade_waiver_btn.text = "Parceria Campeira (3 rod. sem aluguel): Desligada"
+	_apply_button_theme(_trade_waiver_btn, "#16241D", "#20362B", "#0E1712", "#4B7561", Color("#CBE4D6"), false, _bh(34.0), _fs(12.0), 8.0, true)
+	_trade_waiver_btn.toggled.connect(func(pressed: bool) -> void:
+		_trade_waiver_enabled = pressed
+		_sync_trade_waiver_btn_visual()
+		_refresh_trade_summary()
+	)
+	vbox.add_child(_trade_waiver_btn)
+
 	var preview_row: HBoxContainer = HBoxContainer.new()
 	preview_row.add_theme_constant_override("separation", 10)
 	vbox.add_child(preview_row)
@@ -1981,8 +1996,22 @@ func show_trade_modal(pre_target_id: int = -1, pre_request_tile: int = -1, pre_o
 	if _trade_overlay == null:
 		return
 	_trade_cash_value = 0
+	_trade_waiver_enabled = false
+	if _trade_waiver_btn != null:
+		_trade_waiver_btn.set_pressed_no_signal(false)
+		_sync_trade_waiver_btn_visual()
 	_refresh_trade_targets(pre_target_id, pre_request_tile, pre_offer_tile)
 	_trade_overlay.visible = true
+
+func _sync_trade_waiver_btn_visual() -> void:
+	if _trade_waiver_btn == null:
+		return
+	if _trade_waiver_enabled:
+		_trade_waiver_btn.text = "Parceria Campeira Ativa: 3 rodadas sem aluguel mútuo"
+		_apply_button_theme(_trade_waiver_btn, "#1F4B38", "#286148", "#163628", "#7BF1A8", Color("#E8FFF2"), true, _bh(34.0), _fs(12.0), 8.0, true)
+	else:
+		_trade_waiver_btn.text = "Parceria Campeira (3 rod. sem aluguel): Desligada"
+		_apply_button_theme(_trade_waiver_btn, "#16241D", "#20362B", "#0E1712", "#4B7561", Color("#CBE4D6"), false, _bh(34.0), _fs(12.0), 8.0, true)
 
 func hide_trade_modal() -> void:
 	if _trade_overlay != null:
@@ -2118,7 +2147,8 @@ func _refresh_trade_summary() -> void:
 		_trade_summary_label.text = str(check.get("reason", "Proposta incompleta."))
 		_trade_summary_label.add_theme_color_override("font_color", Color("#FF9999"))
 	else:
-		_trade_summary_label.text = "A proposta exige aceite explícito do estanceiro convidado."
+		var waiver_note: String = " + Parceria Campeira (3 rod. sem aluguel)." if _trade_waiver_enabled else ""
+		_trade_summary_label.text = "A proposta exige aceite explícito do estanceiro convidado.%s" % waiver_note
 		_trade_summary_label.add_theme_color_override("font_color", Color("#B7F0CC"))
 
 func _emit_trade() -> void:
@@ -2132,8 +2162,9 @@ func _emit_trade() -> void:
 	var check: Dictionary = TradeAndAuctionHelper.evaluate_trade_counterpart(offer_idx, req_idx, _trade_cash_value)
 	if not bool(check.get("valid", false)):
 		return
+	var waiver_rounds: int = 3 if _trade_waiver_enabled else 0
 	hide_trade_modal()
-	trade_executed.emit(int(target_meta), offer_idx, req_idx, _trade_cash_value)
+	trade_executed.emit(int(target_meta), offer_idx, req_idx, _trade_cash_value, waiver_rounds)
 
 # 2B. Modal de Confirmação Obrigatória de Proposta de Troca (Local ou Remoto P2P)
 func _build_trade_confirm_modal() -> void:
@@ -2201,6 +2232,14 @@ func _build_trade_confirm_modal() -> void:
 	_trade_confirm_receives_label.add_theme_color_override("font_color", Color("#FFD6DE"))
 	r_box.add_child(_trade_confirm_receives_label)
 
+	_trade_confirm_pact_label = Label.new()
+	_trade_confirm_pact_label.visible = false
+	_trade_confirm_pact_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_trade_confirm_pact_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_trade_confirm_pact_label.add_theme_font_size_override("font_size", _fs(13.0))
+	_trade_confirm_pact_label.add_theme_color_override("font_color", Color("#8DF2B5"))
+	vb.add_child(_trade_confirm_pact_label)
+
 	var btn_row: HBoxContainer = HBoxContainer.new()
 	btn_row.add_theme_constant_override("separation", 10)
 	vb.add_child(btn_row)
@@ -2236,6 +2275,13 @@ func show_trade_confirm_modal(offer_data: Dictionary) -> void:
 	_trade_confirm_title_label.text = "%s propôs uma troca para %s" % [s_name, t_name]
 	_trade_confirm_gives_label.text = "Você recebe de %s:\n%s" % [s_name, str(offer_data.get("gives_text", "-"))]
 	_trade_confirm_receives_label.text = "Você entrega em contrapartida:\n%s" % str(offer_data.get("receives_text", "-"))
+	var waiver_r: int = int(offer_data.get("rent_waiver_rounds", 0))
+	if _trade_confirm_pact_label != null:
+		if waiver_r > 0:
+			_trade_confirm_pact_label.text = "Cláusula de Parceria: isenção mútua de aluguel por %d rodada(s)!" % waiver_r
+			_trade_confirm_pact_label.visible = true
+		else:
+			_trade_confirm_pact_label.visible = false
 	_trade_confirm_overlay.move_to_front()
 	_trade_confirm_overlay.visible = true
 

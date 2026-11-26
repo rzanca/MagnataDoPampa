@@ -82,8 +82,11 @@ var sound_manager: SoundManagerClass = null
 var _active_net_session_id: int = 0
 var _applying_remote_state: bool = false
 var _last_victory_info: Dictionary = {}
+const DEFAULT_RENT_WAIVER_ROUNDS: int = 3
+
 var _pending_trade_offer: Dictionary = {}
 var _next_trade_offer_id: int = 1
+var _rent_waiver_pacts: Array[Dictionary] = []
 var _auction_state: Dictionary = {}
 var _pending_periodic_auction: bool = false
 var _auction_bot_token: int = 0
@@ -519,6 +522,7 @@ func _reset_match_state() -> void:
 	_last_dice_sum = 0
 	_last_creditor_id = -1
 	_pending_trade_offer.clear()
+	_rent_waiver_pacts.clear()
 	_auction_state.clear()
 	_pending_periodic_auction = false
 	_player_auctioned_this_turn = false
@@ -598,6 +602,37 @@ func are_allied_players(pid_a: int, pid_b: int) -> bool:
 	var ta: int = get_player_team_id(pid_a)
 	var tb: int = get_player_team_id(pid_b)
 	return ta >= 0 and ta == tb
+
+func has_rent_waiver_pact(pid_a: int, pid_b: int) -> Dictionary:
+	if pid_a < 0 or pid_b < 0 or pid_a == pid_b or _rent_waiver_pacts.is_empty():
+		return {}
+	for pact: Dictionary in _rent_waiver_pacts:
+		var rounds_left: int = int(pact.get("rounds_left", 0))
+		if rounds_left <= 0:
+			continue
+		var pa: int = int(pact.get("a", -1))
+		var pb: int = int(pact.get("b", -1))
+		var direct_match: bool = (pa == pid_a and pb == pid_b) or (pa == pid_b and pb == pid_a)
+		var team_match: bool = is_team_mode() and ((are_allied_players(pa, pid_a) and are_allied_players(pb, pid_b)) or (are_allied_players(pa, pid_b) and are_allied_players(pb, pid_a)))
+		if direct_match or team_match:
+			return pact
+	return {}
+
+func _register_rent_waiver_pact(pid_a: int, pid_b: int, duration_rounds: int) -> void:
+	var safe_rounds: int = clampi(duration_rounds, 0, 5)
+	if safe_rounds <= 0 or pid_a < 0 or pid_b < 0 or pid_a == pid_b:
+		return
+	var lo: int = mini(pid_a, pid_b)
+	var hi: int = maxi(pid_a, pid_b)
+	for pact: Dictionary in _rent_waiver_pacts:
+		if int(pact.get("a", -1)) == lo and int(pact.get("b", -1)) == hi:
+			pact["rounds_left"] = maxi(int(pact.get("rounds_left", 0)), safe_rounds)
+			return
+	_rent_waiver_pacts.append({
+		"a": lo,
+		"b": hi,
+		"rounds_left": safe_rounds
+	})
 
 func _is_owned_by_player_or_team(tile_idx: int, player_id: int) -> bool:
 	var owner_id: int = property_owners.get(tile_idx, -1)
@@ -802,6 +837,7 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	property_buildings.clear()
 	mortgaged_tiles.clear()
 	_pending_trade_offer.clear()
+	_rent_waiver_pacts.clear()
 	_auction_state.clear()
 	_pending_periodic_auction = false
 	_player_auctioned_this_turn = false
@@ -1377,18 +1413,20 @@ func _on_human_end_turn_pressed() -> void:
 		return
 	end_turn()
 
-func _on_human_trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
+func _on_human_trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_delta: int, rent_waiver_rounds: int = 0) -> void:
 	if _is_human_input_blocked():
 		return
+	var safe_waiver: int = clampi(rent_waiver_rounds, 0, DEFAULT_RENT_WAIVER_ROUNDS)
 	if _is_network_client():
 		network.send_action_to_host("TRADE", {
 			"target_id": target_id,
 			"offer_tile": offer_tile,
 			"request_tile": request_tile,
-			"cash_delta": cash_delta
+			"cash_delta": cash_delta,
+			"rent_waiver_rounds": safe_waiver
 		})
 		return
-	execute_trade(target_id, offer_tile, request_tile, cash_delta)
+	execute_trade(target_id, offer_tile, request_tile, cash_delta, safe_waiver)
 
 func _log_both(msg: String) -> void:
 	print(msg)
@@ -1831,6 +1869,18 @@ func _advance_round_if_complete(finished_player_id: int) -> void:
 		return
 	current_round += 1
 	_acted_in_current_round.clear()
+	if not _rent_waiver_pacts.is_empty():
+		var surviving_pacts: Array[Dictionary] = []
+		for pact: Dictionary in _rent_waiver_pacts:
+			var left: int = int(pact.get("rounds_left", 0)) - 1
+			if left > 0:
+				pact["rounds_left"] = left
+				surviving_pacts.append(pact)
+			else:
+				var p_a: Dictionary = _get_player_by_id(int(pact.get("a", -1)))
+				var p_b: Dictionary = _get_player_by_id(int(pact.get("b", -1)))
+				_log_both("Contrato de Parceria entre %s e %s encerrou (aluguel volta ao normal)." % [str(p_a.get("name", "Estanceiro")), str(p_b.get("name", "Estanceiro"))])
+		_rent_waiver_pacts = surviving_pacts
 	if _seasons_enabled:
 		var next_s: int = floori(float(current_round - 1) / float(SEASON_CYCLE_ROUNDS)) % SEASON_ORDER.size()
 		if next_s != _current_season_index:
@@ -2696,6 +2746,15 @@ func evaluate_tile(player: Dictionary, tile: Dictionary, pos: int, dice_sum: int
 					_last_tile_summary = "Estadia aliada (%s • %s): %s sem aluguel!" % [ally_team, ally_name, str(tile["name"])]
 					_log_both(_last_tile_summary)
 					current_state = TurnState.MANAGEMENT
+				elif not has_rent_waiver_pact(owner_id, landing_pid).is_empty():
+					var partner_pact: Dictionary = has_rent_waiver_pact(owner_id, landing_pid)
+					var rounds_rem: int = int(partner_pact.get("rounds_left", 1))
+					var partner_name: String = str(_get_player_by_id(owner_id).get("name", "Parceiro"))
+					_last_tile_summary = "Parceria Campeira (%s • %d rod.): %s sem aluguel!" % [partner_name, rounds_rem, str(tile["name"])]
+					_log_both("Contrato de Parceria ativo (%s x %s, %d rod. restante(s)): isenção de aluguel em %s!" % [str(player["name"]), partner_name, rounds_rem, str(tile["name"])])
+					if hud != null:
+						hud.show_event_toast("Parceria Campeira!", "Isenção temporária de aluguel em %s (%d rod.)." % [str(tile["name"]), rounds_rem], "turn")
+					current_state = TurnState.MANAGEMENT
 				else:
 					var owner: Dictionary = _get_player_by_id(owner_id)
 					var rent_amount: int = _calculate_rent(tile, pos, owner_id, dice_sum)
@@ -3418,15 +3477,16 @@ func _validate_trade_proposal(
 
 	return { "ok": true, "reason": "" }
 
-func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
-	propose_trade(target_id, offer_tile, request_tile, cash_delta)
+func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int, rent_waiver_rounds: int = 0) -> void:
+	propose_trade(target_id, offer_tile, request_tile, cash_delta, rent_waiver_rounds)
 
-func propose_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
+func propose_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int, rent_waiver_rounds: int = 0) -> void:
 	if not _match_active or players.is_empty():
 		return
 	if not _pending_trade_offer.is_empty():
 		_log_both("Já existe uma proposta de troca aguardando confirmação.")
 		return
+	var safe_waiver: int = clampi(rent_waiver_rounds, 0, DEFAULT_RENT_WAIVER_ROUNDS)
 	var sender: Dictionary = players[current_player_index]
 	var sender_id: int = int(sender["id"])
 	var check: Dictionary = _validate_trade_proposal(sender_id, target_id, offer_tile, request_tile, cash_delta)
@@ -3444,10 +3504,11 @@ func propose_trade(target_id: int, offer_tile: int, request_tile: int, cash_delt
 			cash_delta,
 			_build_bot_board_state(),
 			current_round,
-			is_market_push_round()
+			is_market_push_round(),
+			safe_waiver
 		)
 		if accepted_by_bot:
-			_commit_trade_agreement(sender_id, target_id, offer_tile, request_tile, cash_delta)
+			_commit_trade_agreement(sender_id, target_id, offer_tile, request_tile, cash_delta, safe_waiver)
 		else:
 			_log_both("%s [BOT] recusou a proposta de troca." % str(target["name"]))
 			_broadcast_toast_event("Proposta Recusada", "%s [BOT] não aceitou os termos da negociação." % str(target["name"]), "warning")
@@ -3479,6 +3540,7 @@ func propose_trade(target_id: int, offer_tile: int, request_tile: int, cash_delt
 		"offer_tile": offer_tile,
 		"request_tile": request_tile,
 		"cash_delta": cash_delta,
+		"rent_waiver_rounds": safe_waiver,
 		"gives_text": " + ".join(sender_items) if not sender_items.is_empty() else "Nada",
 		"receives_text": " + ".join(target_items) if not target_items.is_empty() else "Nada"
 	}
@@ -3518,19 +3580,21 @@ func respond_to_trade_offer(offer_id: int, accepted: bool) -> void:
 	var offer_tile: int = int(offer.get("offer_tile", -1))
 	var req_tile: int = int(offer.get("request_tile", -1))
 	var cash_delta: int = int(offer.get("cash_delta", 0))
+	var offer_waiver: int = int(offer.get("rent_waiver_rounds", 0))
 	var check: Dictionary = _validate_trade_proposal(sender_id, target_id, offer_tile, req_tile, cash_delta)
 	if not bool(check.get("ok", false)):
 		_log_both(str(check.get("reason", "Proposta expirou ou ficou inválida.")))
 		return
 
-	_commit_trade_agreement(sender_id, target_id, offer_tile, req_tile, cash_delta)
+	_commit_trade_agreement(sender_id, target_id, offer_tile, req_tile, cash_delta, offer_waiver)
 
 func _commit_trade_agreement(
 	sender_id: int,
 	target_id: int,
 	offer_tile: int,
 	request_tile: int,
-	cash_delta: int
+	cash_delta: int,
+	rent_waiver_rounds: int = 0
 ) -> void:
 	var sender: Dictionary = _get_player_by_id(sender_id)
 	var target: Dictionary = _get_player_by_id(target_id)
@@ -3599,8 +3663,13 @@ func _commit_trade_agreement(
 		if request_tile >= 0:
 			_broadcast_tile_pulse(request_tile, board_view.get_player_color(sender_id), "MONOPÓLIO!" if completed_mono else "TROCA!")
 
+	var safe_waiver: int = clampi(rent_waiver_rounds, 0, DEFAULT_RENT_WAIVER_ROUNDS)
+	if safe_waiver > 0:
+		_register_rent_waiver_pact(sender_id, target_id, safe_waiver)
+
 	var mono_suffix: String = " ★ Monopólio completo!" if completed_mono else ""
-	var trade_msg: String = "Negócio fechado: %s entregou %s para %s por %s.%s" % [sender_label, s_part, target_label, t_part, mono_suffix]
+	var pact_suffix: String = " 🤝 Parceria sem aluguel (%d rod.)!" % safe_waiver if safe_waiver > 0 else ""
+	var trade_msg: String = "Negócio fechado: %s entregou %s para %s por %s.%s%s" % [sender_label, s_part, target_label, t_part, mono_suffix, pact_suffix]
 	_log_both(trade_msg)
 	_last_tile_summary = trade_msg
 	_sync_hud()
@@ -4111,6 +4180,7 @@ func _build_network_snapshot() -> Dictionary:
 		"session_id": _active_net_session_id,
 		"team_mode": _team_mode,
 		"team_wallets": team_wallets_out,
+		"rent_waiver_pacts": _rent_waiver_pacts.duplicate(true),
 		"players": clean_players,
 		"property_owners": owners_out,
 		"property_buildings": buildings_out,
@@ -4184,6 +4254,12 @@ func _apply_network_snapshot(snapshot: Dictionary, is_initial_start: bool) -> vo
 	if raw_tw is Dictionary:
 		for tk: Variant in (raw_tw as Dictionary).keys():
 			_team_wallets[int(tk)] = int((raw_tw as Dictionary)[tk])
+	_rent_waiver_pacts.clear()
+	var raw_pacts: Variant = snapshot.get("rent_waiver_pacts", [])
+	if raw_pacts is Array:
+		for p_item: Variant in (raw_pacts as Array):
+			if p_item is Dictionary:
+				_rent_waiver_pacts.append((p_item as Dictionary).duplicate(true))
 	_has_extra_roll = bool(snapshot.get("has_extra_roll", false))
 	_last_dice_sum = int(snapshot.get("last_dice_sum", 0))
 	_last_tile_summary = str(snapshot.get("last_tile_summary", ""))
@@ -4372,7 +4448,8 @@ func _on_network_client_action(sender_peer_id: int, session_id: int, action_name
 				int(params.get("target_id", -1)),
 				int(params.get("offer_tile", -1)),
 				int(params.get("request_tile", -1)),
-				int(params.get("cash_delta", 0))
+				int(params.get("cash_delta", 0)),
+				int(params.get("rent_waiver_rounds", 0))
 			)
 		"END_TURN":
 			end_turn()
