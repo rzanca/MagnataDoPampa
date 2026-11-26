@@ -190,6 +190,13 @@
       "owner_agent": "04_qa_devops.md",
       "status": "done",
       "notes": "Executar bateria completa headless desktop + mobile, validar zero erros e exportar Windows+Launcher e Android APK v0.10.0."
+    },
+    {
+      "id": "LOTE-24",
+      "title": "Repaginação Vertical Android, Ícones Exclusivos, Tutorial Pulável e Render Cloud WSS",
+      "owner_agent": "03_ui_ux_responsaveis.md",
+      "status": "done",
+      "notes": "Layout vertical exclusivo para Android (tabuleiro no topo, dock no polegar), ícones procedurais em MobileIconFactory, tutorial de primeiro uso pulável/desativável, permissões internet Android e URL padrão wss://magnata-do-pampa-signaling.onrender.com."
     }
   ]
 }

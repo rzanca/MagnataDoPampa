@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
-    "version":  "0.10.0",
-    "build_number":  12,
+    "version":  "0.11.0",
+    "build_number":  13,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
-    "release_notes":  "v0.10.0: Ambiente 3D Galpao/Pampa, Modo de Times FFA/2x2/3x3 (Maragatos vs Chimangos), Contratos de Parceria 3 rodadas, Missoes Secretas Dinamicas, Trofeus de Carreira e Trilha Ambiente Sazonal.",
-    "built_at":  "2026-11-26T18:36:50Z",
-    "git_commit":  "d3ea350"
+    "release_notes":  "v0.11.0: Repaginacao vertical Android (Portrait) com icones exclusivos, tutorial pulavel/desativavel, gestos de pinca 3D, Render Cloud WSS pre-aquecido e permissao INTERNET no APK.",
+    "built_at":  "2026-11-26T20:32:40Z",
+    "git_commit":  "659b0b0"
 }

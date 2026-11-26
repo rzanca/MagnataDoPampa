@@ -13,6 +13,7 @@ signal disconnect_network_requested
 signal lobby_config_changed
 signal lobby_slot_pref_requested(pawn_idx: int, color_idx: int, player_name: String)
 signal rules_mode_changed(mode_id: String)
+signal web_tab_opened(signaling_url: String)
 
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
@@ -302,9 +303,13 @@ func _build_ui() -> void:
 	card_margin.add_child(root_vbox)
 
 	# --- Cabeçalho Hero ---
-	var header_row: HBoxContainer = HBoxContainer.new()
-	header_row.add_theme_constant_override("separation", 14)
-	header_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	var header_row: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if header_row is HBoxContainer:
+		(header_row as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+	header_row.add_theme_constant_override("separation" if not _is_touch_mode else "h_separation", 12)
+	if _is_touch_mode:
+		header_row.add_theme_constant_override("v_separation", 8)
+		(header_row as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
 	root_vbox.add_child(header_row)
 
 	var left_nav: HBoxContainer = HBoxContainer.new()
@@ -438,9 +443,14 @@ func _build_ui() -> void:
 	header_row.add_child(_btn_quit)
 
 	# --- Barra de Modo (Local | P2P LAN ENet | Multiplayer Web WebRTC) ---
-	var mode_row: HBoxContainer = HBoxContainer.new()
-	mode_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	mode_row.add_theme_constant_override("separation", 10)
+	var mode_row: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if mode_row is HBoxContainer:
+		(mode_row as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+		mode_row.add_theme_constant_override("separation", 10)
+	else:
+		(mode_row as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
+		mode_row.add_theme_constant_override("h_separation", 8)
+		mode_row.add_theme_constant_override("v_separation", 8)
 	root_vbox.add_child(mode_row)
 
 	_btn_mode_local = Button.new()
@@ -584,9 +594,14 @@ func _build_ui() -> void:
 	web_vb.add_theme_constant_override("separation", 8)
 	_web_panel.add_child(web_vb)
 
-	var web_row_a: HBoxContainer = HBoxContainer.new()
-	web_row_a.add_theme_constant_override("separation", 8)
-	web_row_a.alignment = BoxContainer.ALIGNMENT_CENTER
+	var web_row_a: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if web_row_a is HBoxContainer:
+		(web_row_a as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+		web_row_a.add_theme_constant_override("separation", 8)
+	else:
+		(web_row_a as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
+		web_row_a.add_theme_constant_override("h_separation", 8)
+		web_row_a.add_theme_constant_override("v_separation", 8)
 	web_vb.add_child(web_row_a)
 
 	var wn_lbl: Label = Label.new()
@@ -642,9 +657,14 @@ func _build_ui() -> void:
 	_btn_web_disconnect.pressed.connect(_on_disconnect_pressed)
 	web_row_a.add_child(_btn_web_disconnect)
 
-	var web_row_b: HBoxContainer = HBoxContainer.new()
-	web_row_b.add_theme_constant_override("separation", 8)
-	web_row_b.alignment = BoxContainer.ALIGNMENT_CENTER
+	var web_row_b: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if web_row_b is HBoxContainer:
+		(web_row_b as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+		web_row_b.add_theme_constant_override("separation", 8)
+	else:
+		(web_row_b as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
+		web_row_b.add_theme_constant_override("h_separation", 8)
+		web_row_b.add_theme_constant_override("v_separation", 8)
 	web_vb.add_child(web_row_b)
 
 	var sig_lbl: Label = Label.new()
@@ -654,8 +674,8 @@ func _build_ui() -> void:
 	web_row_b.add_child(sig_lbl)
 
 	_web_sig_url_edit = LineEdit.new()
-	_web_sig_url_edit.text = "ws://127.0.0.1:9080"
-	_web_sig_url_edit.placeholder_text = "ws://127.0.0.1:9080 ou wss://seu-signaling"
+	_web_sig_url_edit.text = "wss://magnata-do-pampa-signaling.onrender.com"
+	_web_sig_url_edit.placeholder_text = "wss://magnata-do-pampa-signaling.onrender.com ou ws://127.0.0.1:9080"
 	_web_sig_url_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_web_sig_url_edit.custom_minimum_size = Vector2(240.0, p2p_h - 4.0)
 	_web_sig_url_edit.add_theme_font_size_override("font_size", roundi(12.0 * f_scale))
@@ -712,9 +732,14 @@ func _build_ui() -> void:
 	toolbar_panel.add_theme_stylebox_override("panel", tb_style)
 	root_vbox.add_child(toolbar_panel)
 
-	var toolbar: HBoxContainer = HBoxContainer.new()
-	toolbar.add_theme_constant_override("separation", 10)
-	toolbar.alignment = BoxContainer.ALIGNMENT_CENTER
+	var toolbar: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if toolbar is HBoxContainer:
+		(toolbar as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+		toolbar.add_theme_constant_override("separation", 10)
+	else:
+		(toolbar as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
+		toolbar.add_theme_constant_override("h_separation", 8)
+		toolbar.add_theme_constant_override("v_separation", 8)
 	toolbar_panel.add_child(toolbar)
 
 	var count_lbl: Label = Label.new()
@@ -1022,11 +1047,18 @@ func _on_viewport_size_changed() -> void:
 	if vp == null:
 		return
 	var vp_size: Vector2 = vp.get_visible_rect().size
-	var target_w: float = clampf(vp_size.x - 56.0, 960.0, 1540.0)
-	var target_h: float = clampf(vp_size.y - 56.0, 620.0, 940.0)
+	var is_portrait_mobile: bool = _is_touch_mode and vp_size.y > vp_size.x
+	var min_w: float = minf(340.0, vp_size.x - 16.0) if (_is_touch_mode or is_portrait_mobile) else 960.0
+	var pad_x: float = 20.0 if _is_touch_mode else 56.0
+	var pad_y: float = 20.0 if _is_touch_mode else 56.0
+	var target_w: float = clampf(vp_size.x - pad_x, min_w, 1540.0)
+	var max_h: float = 2200.0 if is_portrait_mobile else 940.0
+	var target_h: float = clampf(vp_size.y - pad_y, 540.0, max_h)
 	_main_card.custom_minimum_size = Vector2(target_w, target_h)
 	if _cards_grid != null:
-		if _profile_adapter != null:
+		if is_portrait_mobile:
+			_cards_grid.columns = 1
+		elif _profile_adapter != null:
 			_cards_grid.columns = int(_profile_adapter.call("compute_setup_columns", vp_size.x))
 		else:
 			_cards_grid.columns = 1 if vp_size.x < 1080.0 else 2
@@ -1601,6 +1633,9 @@ func _set_mode_tab(target_tab: int) -> void:
 		disconnect_network_requested.emit()
 	_active_mode_tab = target_tab
 	_refresh_mode_tabs()
+	if _active_mode_tab == MODE_TAB_WEBRTC:
+		var sig_url: String = _web_sig_url_edit.text.strip_edges() if _web_sig_url_edit != null else "wss://magnata-do-pampa-signaling.onrender.com"
+		web_tab_opened.emit(sig_url)
 
 func _refresh_mode_tabs() -> void:
 	var f_scale: float = 1.18 if _is_touch_mode else 1.0
@@ -1675,9 +1710,9 @@ func _on_web_host_pressed() -> void:
 		pname = "Anfitrião"
 		if _web_name_edit != null:
 			_web_name_edit.text = pname
-	var sig_url: String = _web_sig_url_edit.text.strip_edges() if _web_sig_url_edit != null else "ws://127.0.0.1:9080"
+	var sig_url: String = _web_sig_url_edit.text.strip_edges() if _web_sig_url_edit != null else "wss://magnata-do-pampa-signaling.onrender.com"
 	if sig_url == "":
-		sig_url = "ws://127.0.0.1:9080"
+		sig_url = "wss://magnata-do-pampa-signaling.onrender.com"
 		if _web_sig_url_edit != null:
 			_web_sig_url_edit.text = sig_url
 	host_web_room_requested.emit(sig_url, pname, _collect_turn_config())
@@ -1695,9 +1730,9 @@ func _on_web_join_pressed() -> void:
 	if code.length() < 4:
 		show_network_error("Digite o Código da Sala compartilhado pelo Host (ex.: P7K4M2).")
 		return
-	var sig_url: String = _web_sig_url_edit.text.strip_edges() if _web_sig_url_edit != null else "ws://127.0.0.1:9080"
+	var sig_url: String = _web_sig_url_edit.text.strip_edges() if _web_sig_url_edit != null else "wss://magnata-do-pampa-signaling.onrender.com"
 	if sig_url == "":
-		sig_url = "ws://127.0.0.1:9080"
+		sig_url = "wss://magnata-do-pampa-signaling.onrender.com"
 		if _web_sig_url_edit != null:
 			_web_sig_url_edit.text = sig_url
 	join_web_room_requested.emit(sig_url, code, pname, _collect_turn_config())

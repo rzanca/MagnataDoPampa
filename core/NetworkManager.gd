@@ -5,8 +5,8 @@ enum TransportMode { NONE, ENET, WEBRTC }
 
 const DEFAULT_PORT: int = 7777
 const MAX_CLIENTS: int = 5 # Host (peer 1) + até 5 clientes remotos = 6 jogadores máx.
-const DEFAULT_SIGNALING_URL: String = "ws://127.0.0.1:9080"
-const SIGNALING_CONNECT_TIMEOUT_SEC: float = 7.0
+const DEFAULT_SIGNALING_URL: String = "wss://magnata-do-pampa-signaling.onrender.com"
+const SIGNALING_CONNECT_TIMEOUT_SEC: float = 45.0
 
 const DEFAULT_STUN_SERVERS: Array[String] = [
 	"stun:stun.l.google.com:19302",
@@ -58,6 +58,8 @@ var _webrtc_data_connected: bool = false
 var _room_peers: Dictionary[int, Dictionary] = {}
 var _peer_order: Array[int] = []
 var _signals_connected: bool = false
+var _prewarm_in_flight: bool = false
+var _last_prewarm_url: String = ""
 
 func _ready() -> void:
 	_connect_multiplayer_signals()
@@ -306,7 +308,7 @@ func host_web_room(signaling_url: String, host_name: String, turn_cfg: Dictionar
 
 	web_room_code_changed.emit("")
 	var ice_tag: String = "STUN+TURN" if has_turn_configured() else "STUN"
-	network_status_changed.emit(int(net_mode), "WebRTC (%s) • Conectando à sinalização %s..." % [ice_tag, clean_ws_url], get_connected_peers_list())
+	network_status_changed.emit(int(net_mode), "WebRTC (%s) • Conectando à sinalização %s (pode levar ~30s se o Render estiver acordando)..." % [ice_tag, clean_ws_url], get_connected_peers_list())
 	return OK
 
 func join_web_room(signaling_url: String, room_code: String, client_name: String, turn_cfg: Dictionary = {}) -> Error:
@@ -362,9 +364,43 @@ func join_web_room(signaling_url: String, room_code: String, client_name: String
 
 func _normalize_signaling_url(raw_url: String) -> String:
 	var s: String = raw_url.strip_edges()
+	while s.ends_with("/"):
+		s = s.substr(0, s.length() - 1)
+	if s.begins_with("https://"):
+		s = "wss://" + s.substr(8)
+	elif s.begins_with("http://"):
+		s = "ws://" + s.substr(7)
 	if s == "":
 		return DEFAULT_SIGNALING_URL
 	return s
+
+func prewarm_signaling_server(raw_url: String = "") -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var ws_url: String = _normalize_signaling_url(raw_url)
+	if not _is_valid_ws_url(ws_url):
+		return
+	var health_url: String = ""
+	if ws_url.begins_with("wss://"):
+		health_url = "https://" + ws_url.substr(6) + "/health"
+	elif ws_url.begins_with("ws://"):
+		health_url = "http://" + ws_url.substr(5) + "/health"
+	if health_url == "" or _prewarm_in_flight or _last_prewarm_url == health_url:
+		return
+	_prewarm_in_flight = true
+	_last_prewarm_url = health_url
+	var req: HTTPRequest = HTTPRequest.new()
+	req.timeout = 30.0
+	add_child(req)
+	req.request_completed.connect(func(_res: int, _code: int, _hdrs: PackedStringArray, _body: PackedByteArray) -> void:
+		_prewarm_in_flight = false
+		if is_instance_valid(req):
+			req.queue_free()
+	)
+	var err: Error = req.request(health_url)
+	if err != OK:
+		_prewarm_in_flight = false
+		req.queue_free()
 
 func _is_valid_ws_url(url_str: String) -> bool:
 	return url_str.begins_with("ws://") or url_str.begins_with("wss://")

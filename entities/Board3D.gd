@@ -109,6 +109,8 @@ var _user_zoom_scale: float = 1.0
 var _user_pan_offset: Vector3 = Vector3.ZERO
 var _is_panning_camera: bool = false
 var _pan_last_mouse_pos: Vector2 = Vector2.ZERO
+var _touch_points: Dictionary[int, Vector2] = {}
+var _pinch_prev_dist: float = 0.0
 var _hovered_tile: int = -1
 var _anim_token: int = 0
 var _moving_player_id: int = -1
@@ -588,9 +590,9 @@ func _get_effective_cam_size(to_2d: bool) -> float:
 		aspect = maxf(320.0, viewport_size.x - 8.0) / maxf(240.0, viewport_size.y - 8.0)
 	elif _sub_viewport != null and _sub_viewport.size.y > 0:
 		aspect = float(_sub_viewport.size.x) / float(_sub_viewport.size.y)
-	var base_size: float = maxf(ISO_CAM_SIZE, 20.8 / maxf(0.5, aspect))
+	var base_size: float = maxf(ISO_CAM_SIZE, 20.8 / maxf(0.55, aspect))
 	if to_2d:
-		base_size = maxf(TOP_CAM_SIZE, 15.6 / maxf(0.5, aspect))
+		base_size = maxf(TOP_CAM_SIZE, 15.6 / maxf(0.55, aspect))
 	return base_size * clampf(_user_zoom_scale, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
 
 func _get_camera_base_pos(to_2d: bool) -> Vector3:
@@ -1771,6 +1773,31 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 	elif event is InputEventPanGesture:
 		var pg: InputEventPanGesture = event
 		pan_camera_by_screen_delta(-pg.delta * 26.0)
+	elif event is InputEventScreenTouch:
+		var st: InputEventScreenTouch = event
+		if st.pressed:
+			_touch_points[st.index] = st.position
+			if _touch_points.size() == 2:
+				_is_panning_camera = false
+				var pts_a: Array = _touch_points.values()
+				_pinch_prev_dist = (pts_a[0] as Vector2).distance_to(pts_a[1] as Vector2)
+		else:
+			_touch_points.erase(st.index)
+			if _touch_points.size() < 2:
+				_pinch_prev_dist = 0.0
+	elif event is InputEventScreenDrag:
+		var sd: InputEventScreenDrag = event
+		_touch_points[sd.index] = sd.position
+		if _touch_points.size() >= 2:
+			_is_panning_camera = false
+			var pts_b: Array = _touch_points.values()
+			var p0: Vector2 = pts_b[0] as Vector2
+			var p1: Vector2 = pts_b[1] as Vector2
+			var cur_dist: float = p0.distance_to(p1)
+			if _pinch_prev_dist > 12.0 and cur_dist > 12.0:
+				var factor: float = clampf(_pinch_prev_dist / cur_dist, 0.80, 1.25)
+				zoom_camera(factor, false)
+			_pinch_prev_dist = cur_dist
 
 func _is_point_over_center_dice_screen(local_pos: Vector2) -> bool:
 	if _camera == null or _sub_viewport == null or _viewport_container == null:

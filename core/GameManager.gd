@@ -137,10 +137,14 @@ var _preferences: Dictionary = {
 	"audio_step_sfx": true,
 	"ambient_enabled": true,
 	"ambient_volume": 0.35,
+	"android_tutorial_seen": false,
+	"android_tutorial_disabled": false,
 	"player_chance_overrides": {}
 }
 
 func _ready() -> void:
+	if OS.get_name() == "Android":
+		DisplayServer.screen_set_orientation(DisplayServer.SCREEN_PORTRAIT)
 	_load_preferences()
 	_load_achievements()
 	load_board_data()
@@ -378,6 +382,7 @@ func _setup_visuals() -> void:
 	setup_screen.lobby_config_changed.connect(_on_lobby_config_changed)
 	setup_screen.lobby_slot_pref_requested.connect(_on_setup_lobby_pref_requested)
 	setup_screen.rules_mode_changed.connect(set_rules_mode)
+	setup_screen.web_tab_opened.connect(_on_setup_web_tab_opened)
 	set_rules_mode(setup_screen.get_rules_mode())
 
 func _on_board_layout_updated(board_rect: Rect2) -> void:
@@ -396,6 +401,10 @@ func _on_settings_requested() -> void:
 func _on_trophies_requested() -> void:
 	if hud != null:
 		hud.show_trophies_modal(get_trophies_status())
+
+func _on_setup_web_tab_opened(signaling_url: String) -> void:
+	if network != null:
+		network.prewarm_signaling_server(signaling_url)
 
 func _load_achievements() -> void:
 	_unlocked_trophies.clear()
@@ -476,6 +485,8 @@ func _load_preferences() -> void:
 	_preferences["audio_step_sfx"] = bool(cfg.get_value("audio", "audio_step_sfx", true))
 	_preferences["ambient_enabled"] = bool(cfg.get_value("audio", "ambient_enabled", true))
 	_preferences["ambient_volume"] = clampf(float(cfg.get_value("audio", "ambient_volume", 0.35)), 0.0, 1.0)
+	_preferences["android_tutorial_seen"] = bool(cfg.get_value("mobile", "android_tutorial_seen", false))
+	_preferences["android_tutorial_disabled"] = bool(cfg.get_value("mobile", "android_tutorial_disabled", false))
 
 func _save_preferences() -> void:
 	var cfg: ConfigFile = ConfigFile.new()
@@ -491,6 +502,8 @@ func _save_preferences() -> void:
 	cfg.set_value("audio", "audio_step_sfx", bool(_preferences.get("audio_step_sfx", true)))
 	cfg.set_value("audio", "ambient_enabled", bool(_preferences.get("ambient_enabled", true)))
 	cfg.set_value("audio", "ambient_volume", clampf(float(_preferences.get("ambient_volume", 0.35)), 0.0, 1.0))
+	cfg.set_value("mobile", "android_tutorial_seen", bool(_preferences.get("android_tutorial_seen", false)))
+	cfg.set_value("mobile", "android_tutorial_disabled", bool(_preferences.get("android_tutorial_disabled", false)))
 	var _save_err: Error = cfg.save(PREFS_FILE_PATH)
 
 func _on_settings_updated(new_prefs: Dictionary) -> void:
@@ -854,6 +867,11 @@ func start_match_from_setup(player_configs: Array[Dictionary]) -> void:
 				if not bool(pm.get("is_bot", false)) and p_peer_id > 1 and _secret_missions.has(pm_id):
 					network.send_match_event_to_peer(p_peer_id, _active_net_session_id, "SECRET_MISSION", (_secret_missions[pm_id] as Dictionary).duplicate(true))
 	_sync_hud()
+	if _is_mobile_platform_active() and hud != null and DisplayServer.get_name() != "headless":
+		var tut_seen: bool = bool(_preferences.get("android_tutorial_seen", false))
+		var tut_disabled: bool = bool(_preferences.get("android_tutorial_disabled", false))
+		if not tut_seen and not tut_disabled:
+			hud.show_tutorial_modal(0)
 	call_deferred("_maybe_start_bot_turn")
 
 func setup_match(player_configs: Array[Dictionary]) -> void:

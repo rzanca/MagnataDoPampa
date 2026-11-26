@@ -37,6 +37,7 @@ const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
 const TradeAndAuctionHelper = preload("res://ui/shared/TradeAndAuctionHelper.gd")
 const ConstructionCartHelper = preload("res://ui/shared/ConstructionCartHelper.gd")
+const MobileIconFactory = preload("res://ui/shared/MobileIconFactory.gd")
 
 const STATUS_BG_DEFAULT: Color = Color(UIStyleTokens.BG_STATUS_DEFAULT)
 const STATUS_BORDER_DEFAULT: Color = Color(UIStyleTokens.BORDER_GOLD)
@@ -200,6 +201,15 @@ var _trophies_overlay: Control
 var _trophies_card: PanelContainer
 var _trophies_list_box: VBoxContainer
 var _trophies_summary_label: Label
+var _tutorial_overlay: Control
+var _tutorial_card: PanelContainer
+var _tutorial_step_label: Label
+var _tutorial_title_label: Label
+var _tutorial_body_label: Label
+var _tutorial_icon_tex: TextureRect
+var _tutorial_prev_btn: Button
+var _tutorial_next_btn: Button
+var _tutorial_step_idx: int = 0
 
 var _victory_overlay: Control
 var _victory_banner: PanelContainer
@@ -292,6 +302,8 @@ var _prefs_cache: Dictionary = {
 	"audio_step_sfx": true,
 	"ambient_enabled": true,
 	"ambient_volume": 0.35,
+	"android_tutorial_seen": false,
+	"android_tutorial_disabled": false,
 	"player_chance_overrides": {}
 }
 
@@ -492,6 +504,23 @@ func _get_effective_viewport_size() -> Vector2:
 		return vp.get_visible_rect().size
 	return Vector2.ZERO
 
+func _is_portrait_mobile() -> bool:
+	if not _is_touch_mode:
+		return false
+	var vp_size: Vector2 = _get_effective_viewport_size()
+	if vp_size.x >= 320.0 and vp_size.y >= 240.0:
+		return vp_size.y >= vp_size.x * 0.95
+	return OS.get_name() == "Android"
+
+func _apply_mobile_icon_button(btn: Button, icon_id: String, compact_label: String = "", tint: Color = Color("#FFF6D6"), icon_size_px: int = 24) -> void:
+	if btn == null or not _is_touch_mode:
+		return
+	btn.icon = MobileIconFactory.get_icon(icon_id, tint)
+	btn.expand_icon = true
+	btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER if compact_label == "" else HORIZONTAL_ALIGNMENT_LEFT
+	btn.add_theme_constant_override("icon_max_width", icon_size_px)
+	btn.text = compact_label
+
 func _update_responsive_layout() -> void:
 	if _side_panel == null:
 		return
@@ -502,52 +531,81 @@ func _update_responsive_layout() -> void:
 
 	var pad: float = float(_profile_adapter.get("viewport_padding")) if _profile_adapter != null else (14.0 if _is_touch_mode else 18.0)
 	var gap: float = float(_profile_adapter.get("panel_gap")) if _profile_adapter != null else (14.0 if _is_touch_mode else 16.0)
-	var panel_w: float = float(_profile_adapter.call("compute_side_panel_width", vp_size.x)) if _profile_adapter != null else clampf(vp_size.x * 0.245, 430.0, 520.0)
-
+	var is_portrait: bool = _is_portrait_mobile()
 	var usable_h: float = maxf(300.0, vp_size.y - pad * 2.0)
-	var board_w: float = maxf(360.0, vp_size.x - pad * 2.0 - gap - panel_w)
 
-	_last_board_rect = Rect2(Vector2(pad, pad), Vector2(board_w, usable_h))
-	_side_panel.anchor_left = 1.0
-	_side_panel.anchor_right = 1.0
-	_side_panel.anchor_top = 0.0
-	_side_panel.anchor_bottom = 1.0
-	_side_panel.offset_left = -(pad + panel_w)
-	_side_panel.offset_right = -pad
-	_side_panel.offset_top = pad
-	_side_panel.offset_bottom = -pad
-	_side_panel.custom_minimum_size = Vector2(panel_w, 0.0)
+	if is_portrait:
+		var board_w: float = maxf(320.0, vp_size.x - pad * 2.0)
+		var board_h: float = clampf(board_w * 0.96, 360.0, vp_size.y * 0.54)
+		var panel_top: float = pad + board_h + gap
+		var panel_h: float = maxf(260.0, vp_size.y - panel_top - pad)
 
-	if _ticker_panel != null:
-		var ticker_h: float = clampf(usable_h * 0.215, 132.0, 226.0)
-		_ticker_panel.custom_minimum_size = Vector2(0.0, ticker_h)
+		_last_board_rect = Rect2(Vector2(pad, pad), Vector2(board_w, board_h))
+		_side_panel.anchor_left = 0.0
+		_side_panel.anchor_right = 1.0
+		_side_panel.anchor_top = 0.0
+		_side_panel.anchor_bottom = 1.0
+		_side_panel.offset_left = pad
+		_side_panel.offset_right = -pad
+		_side_panel.offset_top = panel_top
+		_side_panel.offset_bottom = -pad
+		_side_panel.custom_minimum_size = Vector2(board_w, panel_h)
+
+		if _ticker_panel != null:
+			var tk_portrait_h: float = clampf(panel_h * 0.16, 70.0, 118.0)
+			_ticker_panel.custom_minimum_size = Vector2(0.0, tk_portrait_h)
+		if _board_quick_bar != null:
+			_board_quick_bar.position = Vector2(pad + 8.0, pad + 8.0)
+			_board_quick_bar.custom_minimum_size = Vector2(0.0, 0.0)
+	else:
+		var panel_w: float = float(_profile_adapter.call("compute_side_panel_width", vp_size.x)) if _profile_adapter != null else clampf(vp_size.x * 0.245, 430.0, 520.0)
+		var board_w: float = maxf(360.0, vp_size.x - pad * 2.0 - gap - panel_w)
+
+		_last_board_rect = Rect2(Vector2(pad, pad), Vector2(board_w, usable_h))
+		_side_panel.anchor_left = 1.0
+		_side_panel.anchor_right = 1.0
+		_side_panel.anchor_top = 0.0
+		_side_panel.anchor_bottom = 1.0
+		_side_panel.offset_left = -(pad + panel_w)
+		_side_panel.offset_right = -pad
+		_side_panel.offset_top = pad
+		_side_panel.offset_bottom = -pad
+		_side_panel.custom_minimum_size = Vector2(panel_w, 0.0)
+
+		if _ticker_panel != null:
+			var ticker_h: float = clampf(usable_h * 0.215, 132.0, 226.0)
+			_ticker_panel.custom_minimum_size = Vector2(0.0, ticker_h)
+		if _board_quick_bar != null:
+			_board_quick_bar.position = Vector2(pad + 14.0, pad + 14.0)
+
 	if _settings_card != null:
-		var set_w: float = clampf(vp_size.x * 0.46, 520.0, 740.0) if not _is_touch_mode else clampf(vp_size.x * 0.72, 560.0, 820.0)
-		_settings_card.custom_minimum_size = Vector2(minf(set_w, vp_size.x - 40.0), 0.0)
+		var set_w: float = clampf(vp_size.x * (0.90 if is_portrait else (0.72 if _is_touch_mode else 0.46)), 320.0 if is_portrait else 520.0, 820.0)
+		_settings_card.custom_minimum_size = Vector2(minf(set_w, vp_size.x - 24.0), 0.0)
 	if _settings_scroll != null:
-		var max_scroll_h: float = clampf(vp_size.y * 0.62, 260.0, 620.0)
+		var max_scroll_h: float = clampf(vp_size.y * (0.56 if is_portrait else 0.62), 240.0, 620.0)
 		_settings_scroll.custom_minimum_size = Vector2(0.0, max_scroll_h)
 	if _portfolio_card != null:
-		var port_w: float = clampf(vp_size.x * 0.44, 520.0, 700.0) if not _is_touch_mode else clampf(vp_size.x * 0.72, 540.0, 780.0)
-		_portfolio_card.custom_minimum_size = Vector2(minf(port_w, vp_size.x - 40.0), 0.0)
+		var port_w: float = clampf(vp_size.x * (0.90 if is_portrait else (0.72 if _is_touch_mode else 0.44)), 320.0 if is_portrait else 520.0, 780.0)
+		_portfolio_card.custom_minimum_size = Vector2(minf(port_w, vp_size.x - 24.0), 0.0)
 	if _portfolio_scroll != null:
-		var port_scroll_h: float = clampf(vp_size.y * 0.48, 220.0, 500.0)
+		var port_scroll_h: float = clampf(vp_size.y * 0.48, 200.0, 500.0)
 		_portfolio_scroll.custom_minimum_size = Vector2(0.0, port_scroll_h)
 	if _cart_card != null:
-		var cart_w: float = clampf(vp_size.x * 0.50, 560.0, 780.0) if not _is_touch_mode else clampf(vp_size.x * 0.78, 580.0, 860.0)
-		_cart_card.custom_minimum_size = Vector2(minf(cart_w, vp_size.x - 40.0), 0.0)
+		var cart_w: float = clampf(vp_size.x * (0.92 if is_portrait else (0.78 if _is_touch_mode else 0.50)), 320.0 if is_portrait else 560.0, 860.0)
+		_cart_card.custom_minimum_size = Vector2(minf(cart_w, vp_size.x - 24.0), 0.0)
 	if _cart_scroll != null:
-		var cart_scroll_h: float = clampf(vp_size.y * 0.50, 240.0, 520.0)
+		var cart_scroll_h: float = clampf(vp_size.y * 0.50, 220.0, 520.0)
 		_cart_scroll.custom_minimum_size = Vector2(0.0, cart_scroll_h)
 	if _deed_card != null:
-		var deed_w: float = clampf(vp_size.x * 0.36, 480.0, 580.0) if not _is_touch_mode else clampf(vp_size.x * 0.72, 520.0, 720.0)
-		_deed_card.custom_minimum_size = Vector2(minf(deed_w, vp_size.x - 40.0), 0.0)
+		var deed_w: float = clampf(vp_size.x * (0.90 if is_portrait else (0.72 if _is_touch_mode else 0.36)), 320.0 if is_portrait else 480.0, 720.0)
+		_deed_card.custom_minimum_size = Vector2(minf(deed_w, vp_size.x - 24.0), 0.0)
 	if _deed_scroll != null:
-		var deed_scroll_h: float = clampf(vp_size.y * 0.44, 210.0, 440.0)
+		var deed_scroll_h: float = clampf(vp_size.y * 0.44, 190.0, 440.0)
 		_deed_scroll.custom_minimum_size = Vector2(0.0, deed_scroll_h)
+	if _tutorial_card != null:
+		var tut_w: float = clampf(vp_size.x * (0.90 if is_portrait else 0.58), 320.0, 620.0)
+		_tutorial_card.custom_minimum_size = Vector2(minf(tut_w, vp_size.x - 24.0), 0.0)
 
-	if _board_quick_bar != null:
-		_board_quick_bar.position = Vector2(pad + 14.0, pad + 14.0)
 	_layout_event_toast()
 
 	board_layout_updated.emit(_last_board_rect)
@@ -661,70 +719,97 @@ func _build_ui() -> void:
 	_hud_root.add_child(_board_quick_bar)
 
 	var qb_row: HBoxContainer = HBoxContainer.new()
-	qb_row.add_theme_constant_override("separation", 8)
+	qb_row.add_theme_constant_override("separation", 6 if _is_touch_mode else 8)
 	_board_quick_bar.add_child(qb_row)
 
 	var qb_h: float = _bh(34.0)
 	var qb_fs: int = _fs(12.0)
 
 	_btn_camera = Button.new()
-	_btn_camera.text = "Vista 3D" if _is_touch_mode else "Vista 3D [Tab]"
+	_btn_camera.text = "" if _is_touch_mode else "Vista 3D [Tab]"
+	_btn_camera.tooltip_text = "Alternar entre Vista 3D Isométrica e Vista 2D de conferência"
 	_apply_button_theme(_btn_camera, "#183329", "#224A3B", "#12261F", "#2FA378", Color("#ECFFF5"), false, qb_h, qb_fs, 11.0, true)
+	if _is_touch_mode:
+		_btn_camera.custom_minimum_size = Vector2(qb_h, qb_h)
+		_apply_mobile_icon_button(_btn_camera, "cam_3d", "", Color("#ECFFF5"), 24)
 	_btn_camera.pressed.connect(func() -> void: camera_toggle_requested.emit())
 	qb_row.add_child(_btn_camera)
 
 	_btn_cam_follow = Button.new()
-	_btn_cam_follow.text = "Foco Auto"
+	_btn_cam_follow.text = "" if _is_touch_mode else "Foco Auto"
 	_btn_cam_follow.tooltip_text = "Acompanhar automaticamente o peão da vez na Vista Isométrica"
 	_apply_button_theme(_btn_cam_follow, "#1B362E", "#264C40", "#132620", "#52B788", Color("#D8FFE8"), false, qb_h, qb_fs, 10.0, true)
+	if _is_touch_mode:
+		_btn_cam_follow.custom_minimum_size = Vector2(qb_h, qb_h)
+		_apply_mobile_icon_button(_btn_cam_follow, "cam_follow", "", Color("#D8FFE8"), 24)
 	_btn_cam_follow.pressed.connect(func() -> void: camera_follow_toggle_requested.emit())
 	qb_row.add_child(_btn_cam_follow)
 
 	_btn_cam_reset = Button.new()
-	_btn_cam_reset.text = "Centralizar"
+	_btn_cam_reset.text = "" if _is_touch_mode else "Centralizar"
 	_btn_cam_reset.tooltip_text = "Voltar imediatamente ao enquadramento geral do tabuleiro"
 	_apply_button_theme(_btn_cam_reset, "#1A2721", "#253830", "#121C17", "#4D695B", Color("#E6F0EA"), false, qb_h, qb_fs, 10.0, true)
+	if _is_touch_mode:
+		_btn_cam_reset.custom_minimum_size = Vector2(qb_h, qb_h)
+		_apply_mobile_icon_button(_btn_cam_reset, "cam_center", "", Color("#E6F0EA"), 22)
 	_btn_cam_reset.pressed.connect(func() -> void: camera_reset_requested.emit())
 	qb_row.add_child(_btn_cam_reset)
 
 	_btn_zoom_out = Button.new()
-	_btn_zoom_out.text = "-"
-	_btn_zoom_out.tooltip_text = "Afastar câmera (ou use a roda do mouse)"
+	_btn_zoom_out.text = "" if _is_touch_mode else "-"
+	_btn_zoom_out.tooltip_text = "Afastar câmera (ou use pinça na tela)" if _is_touch_mode else "Afastar câmera (ou use a roda do mouse)"
 	_btn_zoom_out.custom_minimum_size = Vector2(qb_h, qb_h)
 	_apply_button_theme(_btn_zoom_out, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 2, 8.0, true)
+	if _is_touch_mode:
+		_apply_mobile_icon_button(_btn_zoom_out, "zoom_out", "", Color("#E6F0EA"), 22)
 	_btn_zoom_out.pressed.connect(func() -> void: camera_zoom_out_requested.emit())
 	qb_row.add_child(_btn_zoom_out)
 
 	_btn_zoom_in = Button.new()
-	_btn_zoom_in.text = "+"
-	_btn_zoom_in.tooltip_text = "Aproximar câmera (ou use a roda do mouse)"
+	_btn_zoom_in.text = "" if _is_touch_mode else "+"
+	_btn_zoom_in.tooltip_text = "Aproximar câmera (ou use pinça na tela)" if _is_touch_mode else "Aproximar câmera (ou use a roda do mouse)"
 	_btn_zoom_in.custom_minimum_size = Vector2(qb_h, qb_h)
 	_apply_button_theme(_btn_zoom_in, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 2, 8.0, true)
+	if _is_touch_mode:
+		_apply_mobile_icon_button(_btn_zoom_in, "zoom_in", "", Color("#E6F0EA"), 22)
 	_btn_zoom_in.pressed.connect(func() -> void: camera_zoom_in_requested.emit())
 	qb_row.add_child(_btn_zoom_in)
 
 	_btn_help = Button.new()
-	_btn_help.text = "Regras"
+	_btn_help.text = "" if _is_touch_mode else "Regras"
+	_btn_help.tooltip_text = "Regras Rápidas do Magnata do Pampa"
 	_apply_button_theme(_btn_help, "#1A2721", "#253830", "#121C17", "#4D695B", Color("#E6F0EA"), false, qb_h, qb_fs, 11.0, true)
+	if _is_touch_mode:
+		_btn_help.custom_minimum_size = Vector2(qb_h, qb_h)
+		_apply_mobile_icon_button(_btn_help, "help", "", Color("#E6F0EA"), 22)
 	_btn_help.pressed.connect(show_help_modal)
 	qb_row.add_child(_btn_help)
 
 	_btn_settings = Button.new()
-	_btn_settings.text = "Ajustes"
-	_btn_settings.tooltip_text = "Configurar carta de Sorte ou Azar, ritmo dos bots, câmera e conforto visual"
+	_btn_settings.text = "" if _is_touch_mode else "Ajustes"
+	_btn_settings.tooltip_text = "Configurar carta de Sorte ou Azar, ritmo dos bots, câmera e som"
 	_apply_button_theme(_btn_settings, "#1A2923", "#253B32", "#121E19", "#C9A227", Color("#F8E5A8"), false, qb_h, qb_fs, 11.0, true)
+	if _is_touch_mode:
+		_btn_settings.custom_minimum_size = Vector2(qb_h, qb_h)
+		_apply_mobile_icon_button(_btn_settings, "settings", "", Color("#F8E5A8"), 22)
 	_btn_settings.pressed.connect(show_settings_modal)
 	qb_row.add_child(_btn_settings)
 
 	_btn_sound = Button.new()
 	_btn_sound.tooltip_text = "Ativar ou silenciar efeitos sonoros da partida"
+	if _is_touch_mode:
+		_btn_sound.custom_minimum_size = Vector2(qb_h, qb_h)
 	_btn_sound.pressed.connect(func() -> void: _set_global_pref("audio_enabled", not bool(_prefs_cache.get("audio_enabled", true))))
 	qb_row.add_child(_btn_sound)
 	_refresh_sound_button()
 
 	_btn_pause = Button.new()
-	_btn_pause.text = "Menu"
+	_btn_pause.text = "" if _is_touch_mode else "Menu"
+	_btn_pause.tooltip_text = "Abrir Menu da Partida"
 	_apply_button_theme(_btn_pause, "#1E2A24", "#2C3E35", "#151F1A", "#8B7432", Color("#F8E5A8"), false, qb_h, qb_fs, 11.0, true)
+	if _is_touch_mode:
+		_btn_pause.custom_minimum_size = Vector2(qb_h, qb_h)
+		_apply_mobile_icon_button(_btn_pause, "menu", "", Color("#F8E5A8"), 22)
 	_btn_pause.pressed.connect(show_pause_modal)
 	qb_row.add_child(_btn_pause)
 
@@ -1274,6 +1359,7 @@ func _build_modals() -> void:
 	_build_pause_modal()
 	_build_help_modal()
 	_build_trophies_modal()
+	_build_tutorial_modal()
 	_build_victory_modal()
 	_build_chance_card_modal()
 	_build_settings_modal()
@@ -2878,6 +2964,173 @@ func hide_trophies_modal() -> void:
 	if _trophies_overlay != null:
 		_trophies_overlay.visible = false
 
+func _build_tutorial_modal() -> void:
+	_tutorial_overlay = _create_modal_backdrop(Callable())
+
+	var center: CenterContainer = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_tutorial_overlay.add_child(center)
+
+	_tutorial_card = PanelContainer.new()
+	_tutorial_card.custom_minimum_size = Vector2(560.0 if _is_touch_mode else 500.0, 0.0)
+	var card_style: StyleBoxFlat = _make_panel_style("#111B15", "#D4AF37", 18, 2)
+	card_style.shadow_size = 24
+	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.72)
+	_tutorial_card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(_tutorial_card)
+
+	var margin: MarginContainer = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 22)
+	margin.add_theme_constant_override("margin_right", 22)
+	margin.add_theme_constant_override("margin_top", 20)
+	margin.add_theme_constant_override("margin_bottom", 20)
+	_tutorial_card.add_child(margin)
+
+	var vbox: VBoxContainer = VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 12)
+	margin.add_child(vbox)
+
+	_tutorial_step_label = Label.new()
+	_tutorial_step_label.text = "GUIA RÁPIDO • PASSO 1 DE 4"
+	_tutorial_step_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		_tutorial_step_label.add_theme_font_override("font", _bold_font)
+	_tutorial_step_label.add_theme_font_size_override("font_size", _fs(11.5))
+	_tutorial_step_label.add_theme_color_override("font_color", Color("#95D5B2"))
+	vbox.add_child(_tutorial_step_label)
+
+	var hero_icon_row: HBoxContainer = HBoxContainer.new()
+	hero_icon_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	hero_icon_row.add_theme_constant_override("separation", 10)
+	vbox.add_child(hero_icon_row)
+
+	var icon_badge: PanelContainer = PanelContainer.new()
+	var ib_sb: StyleBoxFlat = _make_panel_style("#182C21", "#D4AF37", 14, 2)
+	ib_sb.content_margin_left = 10.0
+	ib_sb.content_margin_right = 10.0
+	ib_sb.content_margin_top = 10.0
+	ib_sb.content_margin_bottom = 10.0
+	icon_badge.add_theme_stylebox_override("panel", ib_sb)
+	hero_icon_row.add_child(icon_badge)
+
+	_tutorial_icon_tex = TextureRect.new()
+	_tutorial_icon_tex.custom_minimum_size = Vector2(44.0, 44.0)
+	_tutorial_icon_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_tutorial_icon_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon_badge.add_child(_tutorial_icon_tex)
+
+	_tutorial_title_label = Label.new()
+	_tutorial_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tutorial_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if _bold_font != null:
+		_tutorial_title_label.add_theme_font_override("font", _bold_font)
+	_tutorial_title_label.add_theme_font_size_override("font_size", _fs(18.5))
+	_tutorial_title_label.add_theme_color_override("font_color", Color("#F5D06F"))
+	vbox.add_child(_tutorial_title_label)
+
+	_tutorial_body_label = Label.new()
+	_tutorial_body_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_tutorial_body_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tutorial_body_label.add_theme_font_size_override("font_size", _fs(13.5))
+	_tutorial_body_label.add_theme_color_override("font_color", Color("#E4EFE8"))
+	vbox.add_child(_tutorial_body_label)
+
+	var nav_row: HBoxContainer = HBoxContainer.new()
+	nav_row.add_theme_constant_override("separation", 10)
+	vbox.add_child(nav_row)
+
+	_tutorial_prev_btn = Button.new()
+	_tutorial_prev_btn.text = "Anterior"
+	_tutorial_prev_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_tutorial_prev_btn, "#1D2C24", "#283D32", "#141F19", "#4B6959", Color("#D8EAE0"), false, _bh(42.0), _fs(13.5), 10.0, true)
+	_tutorial_prev_btn.pressed.connect(func() -> void:
+		if _tutorial_step_idx > 0:
+			show_tutorial_modal(_tutorial_step_idx - 1)
+	)
+	nav_row.add_child(_tutorial_prev_btn)
+
+	_tutorial_next_btn = Button.new()
+	_tutorial_next_btn.text = "Próximo"
+	_tutorial_next_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_tutorial_next_btn.size_flags_stretch_ratio = 1.35
+	_apply_button_theme(_tutorial_next_btn, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), true, _bh(42.0), _fs(14.0), 10.0, true)
+	_tutorial_next_btn.pressed.connect(func() -> void:
+		if _tutorial_step_idx < 3:
+			show_tutorial_modal(_tutorial_step_idx + 1)
+		else:
+			_finish_tutorial_modal(false)
+	)
+	nav_row.add_child(_tutorial_next_btn)
+
+	var skip_row: HBoxContainer = HBoxContainer.new()
+	skip_row.add_theme_constant_override("separation", 8)
+	vbox.add_child(skip_row)
+
+	var btn_skip: Button = Button.new()
+	btn_skip.text = "Pular agora"
+	btn_skip.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(btn_skip, "#17231D", "#22332A", "#101814", "#4A6656", Color("#BDD3C6"), false, _bh(36.0), _fs(12.0), 8.0, true)
+	btn_skip.pressed.connect(func() -> void: _finish_tutorial_modal(false))
+	skip_row.add_child(btn_skip)
+
+	var btn_never: Button = Button.new()
+	btn_never.text = "Não mostrar novamente"
+	btn_never.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(btn_never, "#2B1E1F", "#3D2A2C", "#1F1516", "#8F5056", Color("#FFD5D9"), false, _bh(36.0), _fs(12.0), 8.0, true)
+	btn_never.pressed.connect(func() -> void: _finish_tutorial_modal(true))
+	skip_row.add_child(btn_never)
+
+func show_tutorial_modal(step_idx: int = 0) -> void:
+	if _tutorial_overlay == null:
+		return
+	var steps: Array[Dictionary] = [
+		{
+			"icon": "cam_3d",
+			"title": "Explore o Tabuleiro",
+			"body": "Arraste com 1 dedo para passear pelo Pampa, faça movimento de pinça para zoom e use os ícones no topo para alternar 3D / 2D ou focar no seu peão."
+		},
+		{
+			"icon": "dice",
+			"title": "Comandos na Palma da Mão",
+			"body": "Na sua vez, use os botões com ícones na base da tela para Rolar Dados, Comprar ou Recusar um lote livre e Passar a Vez."
+		},
+		{
+			"icon": "deeds",
+			"title": "Toque na Casa para Gerenciar",
+			"body": "Toque em qualquer terreno do tabuleiro (ou no ícone de Escrituras) para abrir a Carta do Lote: construir casas/hotel, hipotecar ou levar a leilão."
+		},
+		{
+			"icon": "trade",
+			"title": "Negociações, Som e Ajustes",
+			"body": "Proponha trocas pelo ícone de setas, acompanhe os estanceiros nas abas e personalize áudio ou reveja este guia quando quiser em Ajustes."
+		}
+	]
+	_tutorial_step_idx = clampi(step_idx, 0, steps.size() - 1)
+	var cur: Dictionary = steps[_tutorial_step_idx]
+	_tutorial_step_label.text = "GUIA RÁPIDO • PASSO %d DE %d" % [_tutorial_step_idx + 1, steps.size()]
+	_tutorial_title_label.text = str(cur.get("title", ""))
+	_tutorial_body_label.text = str(cur.get("body", ""))
+	if _tutorial_icon_tex != null:
+		_tutorial_icon_tex.texture = MobileIconFactory.get_icon(str(cur.get("icon", "dice")), Color("#F5D06F"))
+	if _tutorial_prev_btn != null:
+		_tutorial_prev_btn.disabled = (_tutorial_step_idx == 0)
+	if _tutorial_next_btn != null:
+		_tutorial_next_btn.text = "Começar a Jogar!" if _tutorial_step_idx == steps.size() - 1 else "Próximo"
+	_tutorial_overlay.move_to_front()
+	_tutorial_overlay.visible = true
+
+func hide_tutorial_modal() -> void:
+	if _tutorial_overlay != null:
+		_tutorial_overlay.visible = false
+
+func _finish_tutorial_modal(disable_permanently: bool) -> void:
+	hide_tutorial_modal()
+	_prefs_cache["android_tutorial_seen"] = true
+	if disable_permanently:
+		_prefs_cache["android_tutorial_disabled"] = true
+	settings_updated.emit(_prefs_cache.duplicate(true))
+
 # 5. Modal de Vitória / Fim de Jogo
 func _build_victory_modal() -> void:
 	_victory_overlay = _create_modal_backdrop(Callable())
@@ -3803,6 +4056,17 @@ func _build_settings_modal() -> void:
 		av_btn.pressed.connect(func() -> void: _set_global_pref("ambient_volume", av_val))
 		amb_vol_row.add_child(av_btn)
 		_settings_ambient_vol_btns[av_key] = av_btn
+
+	if _is_touch_mode:
+		var tut_btn: Button = Button.new()
+		tut_btn.text = "Rever Tutorial de Comandos (Mobile)"
+		_apply_button_theme(tut_btn, "#183329", "#224A3B", "#12261F", "#52B788", Color("#E8FFF2"), false, _bh(38.0), _fs(13.0), 10.0, true)
+		tut_btn.pressed.connect(func() -> void:
+			_prefs_cache["android_tutorial_disabled"] = false
+			hide_settings_modal()
+			show_tutorial_modal(0)
+		)
+		content_vb.add_child(tut_btn)
 
 	var btn_done: Button = Button.new()
 	btn_done.text = "Concluir" if _is_touch_mode else "Concluir [ESC]"
@@ -4858,6 +5122,7 @@ func hide_all_modals() -> void:
 	hide_pause_modal()
 	hide_help_modal()
 	hide_trophies_modal()
+	hide_tutorial_modal()
 	hide_victory_modal()
 	hide_event_toast()
 
@@ -5003,7 +5268,8 @@ func set_camera_mode_label(is_2d: bool) -> void:
 	_cached_is_2d_cam = is_2d
 	if _btn_camera != null:
 		if _is_touch_mode:
-			_btn_camera.text = "Vista 2D" if is_2d else "Vista 3D"
+			_apply_mobile_icon_button(_btn_camera, "cam_2d" if is_2d else "cam_3d", "", Color("#ECFFF5"), 24)
+			_btn_camera.tooltip_text = "Vista 2D ativa (toque para 3D)" if is_2d else "Vista 3D ativa (toque para 2D)"
 		else:
 			_btn_camera.text = "Vista 2D [Tab]" if is_2d else "Vista 3D [Tab]"
 	_refresh_cam_follow_button()
@@ -5018,16 +5284,27 @@ func _refresh_cam_follow_button() -> void:
 	var qb_h: float = _bh(34.0)
 	var qb_fs: int = _fs(12.0)
 	if _cached_is_2d_cam:
-		_btn_cam_follow.text = "2D Fixa"
 		_btn_cam_follow.disabled = true
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_cam_follow, "cam_follow", "", Color("#869E90"), 22)
+		else:
+			_btn_cam_follow.text = "2D Fixa"
 	else:
 		_btn_cam_follow.disabled = false
 		if _cached_cam_follow:
-			_btn_cam_follow.text = "Foco Auto"
 			_apply_button_theme(_btn_cam_follow, "#1B362E", "#264C40", "#132620", "#52B788", Color("#D8FFE8"), false, qb_h, qb_fs, 10.0, true)
+			if _is_touch_mode:
+				_apply_mobile_icon_button(_btn_cam_follow, "cam_follow", "", Color("#D8FFE8"), 24)
+				_btn_cam_follow.tooltip_text = "Foco Automático no Peão: LIGADO"
+			else:
+				_btn_cam_follow.text = "Foco Auto"
 		else:
-			_btn_cam_follow.text = "Foco Fixo"
 			_apply_button_theme(_btn_cam_follow, "#202A25", "#2B3A33", "#161E1A", "#5A6F64", Color("#BFD1C7"), false, qb_h, qb_fs, 10.0, true)
+			if _is_touch_mode:
+				_apply_mobile_icon_button(_btn_cam_follow, "cam_follow", "", Color("#94A99D"), 22)
+				_btn_cam_follow.tooltip_text = "Foco Automático no Peão: DESLIGADO"
+			else:
+				_btn_cam_follow.text = "Foco Fixo"
 
 func _refresh_sound_button() -> void:
 	if _btn_sound == null:
@@ -5036,11 +5313,19 @@ func _refresh_sound_button() -> void:
 	var qb_fs: int = _fs(12.0)
 	var audio_on: bool = bool(_prefs_cache.get("audio_enabled", true))
 	if audio_on:
-		_btn_sound.text = "Som: ON"
 		_apply_button_theme(_btn_sound, "#1B362E", "#264C40", "#132620", "#52B788", Color("#D8FFE8"), false, qb_h, qb_fs, 10.0, true)
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_sound, "sound_on", "", Color("#D8FFE8"), 22)
+			_btn_sound.tooltip_text = "Som Ativo (toque para silenciar)"
+		else:
+			_btn_sound.text = "Som: ON"
 	else:
-		_btn_sound.text = "Mudo"
 		_apply_button_theme(_btn_sound, "#2B1E1E", "#3B2828", "#1E1414", "#A44A4A", Color("#F5C2C2"), false, qb_h, qb_fs, 10.0, true)
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_sound, "sound_off", "", Color("#F5C2C2"), 22)
+			_btn_sound.tooltip_text = "Mudo (toque para ativar som)"
+		else:
+			_btn_sound.text = "Mudo"
 
 func clear_log() -> void:
 	if _log_label != null:
@@ -5207,49 +5492,93 @@ func refresh_hud(
 			_bot_banner_label.text = "Aguardando %s..." % active_name
 
 	_jail_row.visible = (not is_bot_turn) and active_in_jail
-	_btn_bail.text = bail_label if _is_touch_mode else "%s [F]" % bail_label
+	if _is_touch_mode:
+		_apply_mobile_icon_button(_btn_bail, "jail_bail", bail_label.replace("Fiança ", ""), Color("#FFF3D1"), 22)
+		_btn_bail.tooltip_text = bail_label
+		_apply_mobile_icon_button(_btn_jail_card, "jail_card", "", Color.WHITE, 22)
+		_btn_jail_card.tooltip_text = jail_card_label
+	else:
+		_btn_bail.text = "%s [F]" % bail_label
+		_btn_jail_card.text = "%s [L]" % jail_card_label
 	_btn_bail.disabled = lock_controls or not can_bail
-	_btn_jail_card.text = jail_card_label if _is_touch_mode else "%s [L]" % jail_card_label
 	_btn_jail_card.disabled = lock_controls or not can_use_jail_card
 
 	var show_eval_pair: bool = can_decline or can_buy
 	var show_roll_main: bool = can_roll and not show_eval_pair
 
 	_btn_roll.visible = show_roll_main
-	_btn_roll.text = "Rolar Dados" if _is_touch_mode else "Rolar Dados [Espaço]"
+	if _is_touch_mode:
+		_apply_mobile_icon_button(_btn_roll, "dice", "Rolar", Color("#101713"), 28)
+		_btn_roll.tooltip_text = "Rolar Dados"
+	else:
+		_btn_roll.text = "Rolar Dados [Espaço]"
 	_btn_roll.disabled = lock_controls or not can_roll
 
 	_btn_buy.visible = show_eval_pair
-	_btn_buy.text = buy_label if _is_touch_mode else "%s [C]" % buy_label
+	if _is_touch_mode:
+		var buy_compact: String = buy_label.replace("Comprar ", "").replace("(", "").replace(")", "")
+		_apply_mobile_icon_button(_btn_buy, "buy", buy_compact, Color.WHITE, 26)
+		_btn_buy.tooltip_text = buy_label
+	else:
+		_btn_buy.text = "%s [C]" % buy_label
 	_btn_buy.disabled = lock_controls or not can_buy
 
 	_btn_decline.visible = show_eval_pair
-	_btn_decline.text = "Recusar" if _is_touch_mode else "Recusar [R]"
+	if _is_touch_mode:
+		_apply_mobile_icon_button(_btn_decline, "decline", "", Color("#F5F9F6"), 24)
+		_btn_decline.tooltip_text = "Recusar compra"
+	else:
+		_btn_decline.text = "Recusar [R]"
 	_btn_decline.disabled = lock_controls or not can_decline
 
 	_btn_end_turn.visible = (not show_roll_main) and (not show_eval_pair)
 	_btn_end_turn.disabled = lock_controls or not can_end
 
 	if active_money < 0 and _btn_end_turn.visible:
-		_btn_end_turn.text = "Declarar Falência" if can_end else "Liquide seus bens"
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_end_turn, "end_turn" if can_end else "deeds", "Falir" if can_end else "Liquidar", Color.WHITE, 24)
+		else:
+			_btn_end_turn.text = "Declarar Falência" if can_end else "Liquide seus bens"
 	elif _btn_end_turn.visible and not can_end and not is_bot_turn:
-		_btn_end_turn.text = "Aguarde..."
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_end_turn, "end_turn", "...", Color.WHITE, 24)
+		else:
+			_btn_end_turn.text = "Aguarde..."
 	elif primary_action == "END_TURN" and _btn_end_turn.visible:
-		_btn_end_turn.text = "Passar a Vez" if _is_touch_mode else "Passar a Vez [E]"
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_end_turn, "end_turn", "Passar", Color.WHITE, 26)
+			_btn_end_turn.tooltip_text = "Passar a Vez"
+		else:
+			_btn_end_turn.text = "Passar a Vez [E]"
 	else:
-		_btn_end_turn.text = "Passar a Vez" if _is_touch_mode else "Passar a Vez [E]"
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_end_turn, "end_turn", "Passar", Color.WHITE, 26)
+			_btn_end_turn.tooltip_text = "Passar a Vez"
+		else:
+			_btn_end_turn.text = "Passar a Vez [E]"
 
-	_btn_trade_open.text = "Negociar" if _is_touch_mode else "Negociar [N]"
+	if _is_touch_mode:
+		_apply_mobile_icon_button(_btn_trade_open, "trade", "", Color("#E4F5FF"), 24)
+		_btn_trade_open.tooltip_text = "Propor Troca / Negociação"
+	else:
+		_btn_trade_open.text = "Negociar [N]"
 	_btn_trade_open.disabled = lock_controls or not can_trade
 	if lock_controls or not can_trade:
 		hide_trade_modal()
 
 	if active_money < 0 and not owned_options.is_empty():
-		_btn_deeds_jump.text = "Quitar Dívida (%d)" % owned_options.size()
 		_apply_button_theme(_btn_deeds_jump, "#592822", "#75352D", "#401C18", "#FF758F", Color("#FFE8E8"), true, _bh(38.0), _fs(13.0), 10.0, true)
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_deeds_jump, "deeds", "Quitar (%d)" % owned_options.size(), Color("#FFE8E8"), 22)
+		else:
+			_btn_deeds_jump.text = "Quitar Dívida (%d)" % owned_options.size()
 	else:
-		_btn_deeds_jump.text = "Minhas Escrituras (%d)" % owned_options.size()
 		_apply_button_theme(_btn_deeds_jump, "#1B2E25", "#254033", "#13211A", "#52B788", Color("#E9F5EE"), false, _bh(38.0), _fs(13.0), 10.0, true)
+		if _is_touch_mode:
+			_apply_mobile_icon_button(_btn_deeds_jump, "deeds", "(%d)" % owned_options.size(), Color("#E9F5EE"), 22)
+			_btn_deeds_jump.tooltip_text = "Minhas Escrituras (%d)" % owned_options.size()
+		else:
+			_btn_deeds_jump.text = "Minhas Escrituras (%d)" % owned_options.size()
 	_btn_deeds_jump.disabled = not has_active
 
 func set_network_identity(is_online: bool, is_host: bool, local_peer_id: int, local_player_id: int, wait_text: String, transport_label: String = "ONLINE", room_code: String = "") -> void:

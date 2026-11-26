@@ -50,3 +50,9 @@
 - **Contratos de Parceria / Arrendamento Temporário:** em negociações entre adversários, opção de incluir pacto de isenção mútua de aluguel por `3` rodadas.
 - **Missões Secretas & Conquistas:** objetivos secretos individuais na *Estância Dinâmica* (bônus único de `+600 Pilas`) e sistema persistente de **6 Troféus de Carreira** salvos em `user://achievements.cfg`.
 - **Trilha Ambiente Dinâmica por Estação:** leito sonoro contínuo opcional gerado por `SoundManager` conforme a estação ativa, com controle liga/desliga e volume dedicados em *Ajustes*.
+
+## 7. Experiência Vertical Mobile (Android) & Sinalização Render Cloud (v0.11.0)
+- **Layout Vertical Exclusivo (Portrait):** orientação retrato nativa no Android (`window/handheld/orientation="portrait"` + `DisplayServer.SCREEN_PORTRAIT`), sem alterar o Desktop (`1920x1080`). Tabuleiro 3D/2D enquadrado no bloco superior (`~54%` da altura) com gestos táteis (pan + pinça de zoom) e painel/dock ergonômico na zona inferior do polegar.
+- **Botões com Ícones Exclusivos (`MobileIconFactory`):** barra rápida superior e dock de turno no Android usam ícones temáticos anti-aliased no lugar de textos extensos, mantendo os atalhos textuais completos exclusivamente no Windows.
+- **Tutorial de Primeiro Uso:** guia interativo em 4 passos na primeira partida mobile, com opções imediatas de **Pular agora** ou **Não mostrar novamente** (e atalho de reexibição em *Ajustes*), persistido em `user://preferences.cfg`.
+- **Multiplayer Web via Render Cloud:** URL padrão configurada para `wss://magnata-do-pampa-signaling.onrender.com`, timeout estendido (`45s`) + *pre-warm* automático em `/health` contra *cold start*, e permissões `INTERNET` + `ACCESS_NETWORK_STATE` habilitadas no export Android.
