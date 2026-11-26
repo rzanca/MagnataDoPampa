@@ -741,6 +741,12 @@ func broadcast_match_event(session_id: int, event_type: String, payload: Diction
 	if _can_send_host_rpc():
 		_rpc_match_event.rpc(session_id, event_type, payload)
 
+func send_match_event_to_peer(target_peer_id: int, session_id: int, event_type: String, payload: Dictionary) -> void:
+	if not is_host() or target_peer_id <= 1:
+		return
+	if _can_send_host_rpc() and (target_peer_id in multiplayer.get_peers()):
+		_rpc_match_event.rpc_id(target_peer_id, session_id, event_type, payload)
+
 func send_action_to_host(action_name: String, params: Dictionary = {}) -> void:
 	if not _can_send_client_rpc():
 		return

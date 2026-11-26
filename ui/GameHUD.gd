@@ -11,6 +11,9 @@ signal sell_building_pressed(tile_index: int)
 signal mortgage_pressed(tile_index: int)
 signal end_turn_pressed
 signal trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_delta: int)
+signal trade_offer_responded(offer_id: int, accepted: bool)
+signal auction_bid_submitted(bid_amount: int)
+signal auction_pass_submitted
 signal menu_requested
 signal restart_match_requested
 signal camera_toggle_requested
@@ -24,6 +27,7 @@ signal chance_card_dismissed
 
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
+const TradeAndAuctionHelper = preload("res://ui/shared/TradeAndAuctionHelper.gd")
 
 const STATUS_BG_DEFAULT: Color = Color(UIStyleTokens.BG_STATUS_DEFAULT)
 const STATUS_BORDER_DEFAULT: Color = Color(UIStyleTokens.BORDER_GOLD)
@@ -117,14 +121,39 @@ var _deed_banner: PanelContainer
 var _deed_title_label: Label
 var _deed_group_label: Label
 var _deed_body_box: VBoxContainer
+var _deed_trade_btn: Button
+var _deed_trade_target_id: int = -1
+var _deed_trade_tile_idx: int = -1
 
 var _trade_overlay: Control
 var _trade_target_select: OptionButton
 var _trade_offer_select: OptionButton
 var _trade_request_select: OptionButton
 var _trade_cash_label: Label
+var _trade_deliver_preview: Label
+var _trade_receive_preview: Label
 var _trade_summary_label: Label
+var _trade_confirm_btn: Button
 var _trade_cash_value: int = 0
+
+var _trade_confirm_overlay: Control
+var _trade_confirm_title_label: Label
+var _trade_confirm_gives_label: Label
+var _trade_confirm_receives_label: Label
+var _trade_confirm_offer_id: int = -1
+
+var _auction_overlay: Control
+var _auction_banner: PanelContainer
+var _auction_title_label: Label
+var _auction_meta_label: Label
+var _auction_bid_label: Label
+var _auction_turn_label: Label
+var _auction_btn_min: Button
+var _auction_btn_20: Button
+var _auction_btn_50: Button
+var _auction_btn_100: Button
+var _auction_btn_pass: Button
+var _auction_min_next_val: int = 0
 
 var _pause_overlay: Control
 var _pause_restart_btn: Button
@@ -190,6 +219,7 @@ var _settings_bot_speed_btns: Dictionary[String, Button] = {}
 var _settings_cam_follow_btns: Dictionary[String, Button] = {}
 var _settings_scale_btns: Dictionary[String, Button] = {}
 var _settings_toast_btns: Dictionary[String, Button] = {}
+var _settings_auction_btns: Dictionary[String, Button] = {}
 var _settings_note_label: Label
 var _settings_card: PanelContainer
 var _settings_scroll: ScrollContainer
@@ -203,6 +233,7 @@ var _prefs_cache: Dictionary = {
 	"camera_follow": true,
 	"ui_comfort_scale": "normal",
 	"show_event_toasts": true,
+	"auction_interval_rounds": 3,
 	"player_chance_overrides": {}
 }
 
@@ -355,6 +386,10 @@ func _input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 
 func has_blocking_modal_open() -> bool:
+	if _auction_overlay != null and _auction_overlay.visible:
+		return true
+	if _trade_confirm_overlay != null and _trade_confirm_overlay.visible:
+		return true
 	if _chance_overlay != null and _chance_overlay.visible:
 		return true
 	if _portfolio_overlay != null and _portfolio_overlay.visible:
@@ -1190,6 +1225,8 @@ func _build_modals() -> void:
 
 	_build_deed_modal()
 	_build_trade_modal()
+	_build_trade_confirm_modal()
+	_build_auction_modal()
 	_build_pause_modal()
 	_build_help_modal()
 	_build_victory_modal()
@@ -1289,11 +1326,30 @@ func _build_deed_modal() -> void:
 	_deeds_spacing_init(_deed_body_box, 7)
 	body_outer.add_child(_deed_body_box)
 
+	var deed_btns_row: HBoxContainer = HBoxContainer.new()
+	deed_btns_row.add_theme_constant_override("separation", 10)
+	body_outer.add_child(deed_btns_row)
+
+	_deed_trade_btn = Button.new()
+	_deed_trade_btn.text = "Propor Troca por Este Lote"
+	_deed_trade_btn.visible = false
+	_deed_trade_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_trade_btn, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), true, _bh(42.0), _fs(13.5), 10.0, true)
+	_deed_trade_btn.pressed.connect(func() -> void:
+		var t_id: int = _deed_trade_target_id
+		var t_idx: int = _deed_trade_tile_idx
+		hide_deed_modal()
+		if t_id >= 0 and t_idx >= 0:
+			show_trade_modal(t_id, t_idx)
+	)
+	deed_btns_row.add_child(_deed_trade_btn)
+
 	var btn_close: Button = Button.new()
 	btn_close.text = "Fechar" if _is_touch_mode else "Fechar [ESC]"
+	btn_close.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(btn_close, "#213329", "#2E473A", "#17241D", "#D4AF37", Color.WHITE, false, _bh(42.0), _fs(14.0), 12.0, true)
 	btn_close.pressed.connect(hide_deed_modal)
-	body_outer.add_child(btn_close)
+	deed_btns_row.add_child(btn_close)
 
 func _deeds_spacing_init(vb: VBoxContainer, sep: int) -> void:
 	vb.add_theme_constant_override("separation", sep)
@@ -1428,6 +1484,11 @@ func show_deed_modal(info: Dictionary) -> void:
 			_:
 				desc_lbl.text = "Casa #%d do tabuleiro." % int(tile.get("index", 0))
 		_deed_body_box.add_child(desc_lbl)
+
+	_deed_trade_target_id = int(info.get("owner_id", -1))
+	_deed_trade_tile_idx = int(info.get("tile_index", -1))
+	if _deed_trade_btn != null:
+		_deed_trade_btn.visible = bool(info.get("can_propose_trade", false)) and _deed_trade_target_id >= 0 and _deed_trade_tile_idx >= 0
 
 	_deed_overlay.visible = true
 
@@ -1594,11 +1655,67 @@ func _build_trade_modal() -> void:
 			s_btn.pressed.connect(func() -> void: _adjust_trade_cash(delta_ref))
 		step_row.add_child(s_btn)
 
+	var preview_row: HBoxContainer = HBoxContainer.new()
+	preview_row.add_theme_constant_override("separation", 10)
+	vbox.add_child(preview_row)
+
+	var deliv_card: PanelContainer = PanelContainer.new()
+	deliv_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var deliv_sb: StyleBoxFlat = _make_panel_style("#18211C", "#C9A227", 9, 1)
+	deliv_sb.content_margin_left = 10.0
+	deliv_sb.content_margin_right = 10.0
+	deliv_sb.content_margin_top = 8.0
+	deliv_sb.content_margin_bottom = 8.0
+	deliv_card.add_theme_stylebox_override("panel", deliv_sb)
+	preview_row.add_child(deliv_card)
+
+	var deliv_vb: VBoxContainer = VBoxContainer.new()
+	deliv_vb.add_theme_constant_override("separation", 2)
+	deliv_card.add_child(deliv_vb)
+	var deliv_hdr: Label = Label.new()
+	deliv_hdr.text = "VOCÊ ENTREGA"
+	if _bold_font != null:
+		deliv_hdr.add_theme_font_override("font", _bold_font)
+	deliv_hdr.add_theme_font_size_override("font_size", _fs(11.0))
+	deliv_hdr.add_theme_color_override("font_color", Color("#F3C969"))
+	deliv_vb.add_child(deliv_hdr)
+	_trade_deliver_preview = Label.new()
+	_trade_deliver_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_trade_deliver_preview.add_theme_font_size_override("font_size", _fs(12.5))
+	_trade_deliver_preview.add_theme_color_override("font_color", Color("#FFFDF5"))
+	deliv_vb.add_child(_trade_deliver_preview)
+
+	var rec_card: PanelContainer = PanelContainer.new()
+	rec_card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var rec_sb: StyleBoxFlat = _make_panel_style("#13231D", "#52B788", 9, 1)
+	rec_sb.content_margin_left = 10.0
+	rec_sb.content_margin_right = 10.0
+	rec_sb.content_margin_top = 8.0
+	rec_sb.content_margin_bottom = 8.0
+	rec_card.add_theme_stylebox_override("panel", rec_sb)
+	preview_row.add_child(rec_card)
+
+	var rec_vb: VBoxContainer = VBoxContainer.new()
+	rec_vb.add_theme_constant_override("separation", 2)
+	rec_card.add_child(rec_vb)
+	var rec_hdr: Label = Label.new()
+	rec_hdr.text = "VOCÊ RECEBE"
+	if _bold_font != null:
+		rec_hdr.add_theme_font_override("font", _bold_font)
+	rec_hdr.add_theme_font_size_override("font_size", _fs(11.0))
+	rec_hdr.add_theme_color_override("font_color", Color("#7BF1A8"))
+	rec_vb.add_child(rec_hdr)
+	_trade_receive_preview = Label.new()
+	_trade_receive_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_trade_receive_preview.add_theme_font_size_override("font_size", _fs(12.5))
+	_trade_receive_preview.add_theme_color_override("font_color", Color("#E8FFF2"))
+	rec_vb.add_child(_trade_receive_preview)
+
 	_trade_summary_label = Label.new()
 	_trade_summary_label.text = ""
 	_trade_summary_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_trade_summary_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_trade_summary_label.add_theme_font_size_override("font_size", _fs(13.0))
+	_trade_summary_label.add_theme_font_size_override("font_size", _fs(12.5))
 	_trade_summary_label.add_theme_color_override("font_color", Color("#D8E8DE"))
 	vbox.add_child(_trade_summary_label)
 
@@ -1614,19 +1731,19 @@ func _build_trade_modal() -> void:
 	btn_cancel.pressed.connect(hide_trade_modal)
 	btn_row.add_child(btn_cancel)
 
-	var btn_confirm: Button = Button.new()
-	btn_confirm.text = "Fechar Negócio"
-	btn_confirm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	btn_confirm.size_flags_stretch_ratio = 1.25
-	_apply_button_theme(btn_confirm, "#227557", "#2C946E", "#185740", "#A8FF78", Color.WHITE, true, _bh(44.0), _fs(14.0), 10.0, true)
-	btn_confirm.pressed.connect(_emit_trade)
-	btn_row.add_child(btn_confirm)
+	_trade_confirm_btn = Button.new()
+	_trade_confirm_btn.text = "Enviar Proposta"
+	_trade_confirm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_trade_confirm_btn.size_flags_stretch_ratio = 1.25
+	_apply_button_theme(_trade_confirm_btn, "#227557", "#2C946E", "#185740", "#A8FF78", Color.WHITE, true, _bh(44.0), _fs(14.0), 10.0, true)
+	_trade_confirm_btn.pressed.connect(_emit_trade)
+	btn_row.add_child(_trade_confirm_btn)
 
-func show_trade_modal() -> void:
+func show_trade_modal(pre_target_id: int = -1, pre_request_tile: int = -1) -> void:
 	if _trade_overlay == null:
 		return
 	_trade_cash_value = 0
-	_refresh_trade_targets()
+	_refresh_trade_targets(pre_target_id, pre_request_tile)
 	_trade_overlay.visible = true
 
 func hide_trade_modal() -> void:
@@ -1637,8 +1754,9 @@ func _adjust_trade_cash(delta: int) -> void:
 	_trade_cash_value = clampi(_trade_cash_value + delta, -5000, 5000)
 	_refresh_trade_summary()
 
-func _refresh_trade_targets() -> void:
+func _refresh_trade_targets(pre_target_id: int = -1, pre_request_tile: int = -1) -> void:
 	var prev_target_meta: Variant = _trade_target_select.get_selected_metadata()
+	var wanted_target_id: int = pre_target_id if pre_target_id >= 0 else (int(prev_target_meta) if prev_target_meta != null else -1)
 	_trade_target_select.clear()
 	var selected_idx: int = 0
 
@@ -1653,12 +1771,12 @@ func _refresh_trade_targets() -> void:
 		_trade_target_select.add_item("%s%s (%s)" % [str(p["name"]), bot_tag, _format_brl(int(p["money"]))])
 		var item_idx: int = _trade_target_select.item_count - 1
 		_trade_target_select.set_item_metadata(item_idx, pid)
-		if prev_target_meta != null and int(prev_target_meta) == pid:
+		if wanted_target_id >= 0 and wanted_target_id == pid:
 			selected_idx = item_idx
 
 	if _trade_target_select.item_count > 0:
 		_trade_target_select.select(selected_idx)
-	_refresh_trade_dropdowns()
+	_refresh_trade_dropdowns(pre_request_tile)
 
 func set_board_snapshot_meta(
 	owners_map: Dictionary[int, int],
@@ -1686,7 +1804,7 @@ func _is_tile_tradable_in_cache(tile_idx: int) -> bool:
 						return false
 	return true
 
-func _refresh_trade_dropdowns() -> void:
+func _refresh_trade_dropdowns(pre_request_tile: int = -1) -> void:
 	_trade_offer_select.clear()
 	_trade_offer_select.add_item("Nenhuma escritura")
 	_trade_offer_select.set_item_metadata(0, -1)
@@ -1703,6 +1821,7 @@ func _refresh_trade_dropdowns() -> void:
 	_trade_request_select.add_item("Nenhuma escritura")
 	_trade_request_select.set_item_metadata(0, -1)
 
+	var req_pre_idx: int = 0
 	var target_id: Variant = _trade_target_select.get_selected_metadata()
 	if target_id != null:
 		var target_id_int: int = int(target_id)
@@ -1713,8 +1832,13 @@ func _refresh_trade_dropdowns() -> void:
 					var idx_int: int = int(t_idx)
 					if idx_int >= 0 and idx_int < _cached_tiles.size() and _is_tile_tradable_in_cache(idx_int):
 						_trade_request_select.add_item(str(_cached_tiles[idx_int]["name"]))
-						_trade_request_select.set_item_metadata(_trade_request_select.item_count - 1, idx_int)
+						var added_idx: int = _trade_request_select.item_count - 1
+						_trade_request_select.set_item_metadata(added_idx, idx_int)
+						if pre_request_tile >= 0 and idx_int == pre_request_tile:
+							req_pre_idx = added_idx
 				break
+	if req_pre_idx > 0:
+		_trade_request_select.select(req_pre_idx)
 
 	_refresh_trade_summary()
 
@@ -1736,23 +1860,22 @@ func _refresh_trade_summary() -> void:
 	var offer_txt: String = str(_cached_tiles[offer_idx]["name"]) if (offer_idx >= 0 and offer_idx < _cached_tiles.size()) else ""
 	var req_txt: String = str(_cached_tiles[req_idx]["name"]) if (req_idx >= 0 and req_idx < _cached_tiles.size()) else ""
 
-	if offer_txt == "" and req_txt == "" and _trade_cash_value == 0:
-		_trade_summary_label.text = "Selecione uma escritura ou ajuste o valor para propor o negócio."
-		return
-	var gives: Array[String] = []
-	var receives: Array[String] = []
-	if offer_txt != "":
-		gives.append(offer_txt)
-	if _trade_cash_value > 0:
-		gives.append(_format_brl(_trade_cash_value))
-	if req_txt != "":
-		receives.append(req_txt)
-	if _trade_cash_value < 0:
-		receives.append(_format_brl(absi(_trade_cash_value)))
+	var sides: Dictionary = TradeAndAuctionHelper.format_trade_sides(offer_txt, req_txt, _trade_cash_value)
+	if _trade_deliver_preview != null:
+		_trade_deliver_preview.text = str(sides["sender_text"])
+	if _trade_receive_preview != null:
+		_trade_receive_preview.text = str(sides["target_text"])
 
-	var g_str: String = " + ".join(gives) if not gives.is_empty() else "nada"
-	var r_str: String = " + ".join(receives) if not receives.is_empty() else "nada"
-	_trade_summary_label.text = "Resumo: você entrega %s  ⇄  recebe %s." % [g_str, r_str]
+	var check: Dictionary = TradeAndAuctionHelper.evaluate_trade_counterpart(offer_idx, req_idx, _trade_cash_value)
+	var is_valid: bool = bool(check.get("valid", false))
+	if _trade_confirm_btn != null:
+		_trade_confirm_btn.disabled = not is_valid
+	if not is_valid:
+		_trade_summary_label.text = str(check.get("reason", "Proposta incompleta."))
+		_trade_summary_label.add_theme_color_override("font_color", Color("#FF9999"))
+	else:
+		_trade_summary_label.text = "A proposta exige aceite explícito do estanceiro convidado."
+		_trade_summary_label.add_theme_color_override("font_color", Color("#B7F0CC"))
 
 func _emit_trade() -> void:
 	var target_meta: Variant = _trade_target_select.get_selected_metadata()
@@ -1762,7 +1885,321 @@ func _emit_trade() -> void:
 	var req_meta: Variant = _trade_request_select.get_selected_metadata()
 	var offer_idx: int = int(offer_meta) if offer_meta != null else -1
 	var req_idx: int = int(req_meta) if req_meta != null else -1
+	var check: Dictionary = TradeAndAuctionHelper.evaluate_trade_counterpart(offer_idx, req_idx, _trade_cash_value)
+	if not bool(check.get("valid", false)):
+		return
+	hide_trade_modal()
 	trade_executed.emit(int(target_meta), offer_idx, req_idx, _trade_cash_value)
+
+# 2B. Modal de Confirmação Obrigatória de Proposta de Troca (Local ou Remoto P2P)
+func _build_trade_confirm_modal() -> void:
+	_trade_confirm_overlay = _create_modal_backdrop(Callable())
+
+	var center: CenterContainer = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_trade_confirm_overlay.add_child(center)
+
+	var card: PanelContainer = PanelContainer.new()
+	card.custom_minimum_size = Vector2(580.0 if _is_touch_mode else 520.0, 0.0)
+	var card_style: StyleBoxFlat = _make_panel_style("#121E18", "#F3C969", 18, 2)
+	card_style.shadow_size = 24
+	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.70)
+	card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(card)
+
+	var margin: MarginContainer = MarginContainer.new()
+	margin.add_theme_constant_override("margin_left", 24)
+	margin.add_theme_constant_override("margin_right", 24)
+	margin.add_theme_constant_override("margin_top", 20)
+	margin.add_theme_constant_override("margin_bottom", 20)
+	card.add_child(margin)
+
+	var vb: VBoxContainer = VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	margin.add_child(vb)
+
+	_trade_confirm_title_label = Label.new()
+	_trade_confirm_title_label.text = "PROPOSTA DE NEGOCIAÇÃO"
+	_trade_confirm_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_trade_confirm_title_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if _bold_font != null:
+		_trade_confirm_title_label.add_theme_font_override("font", _bold_font)
+	_trade_confirm_title_label.add_theme_font_size_override("font_size", _fs(18.0))
+	_trade_confirm_title_label.add_theme_color_override("font_color", Color("#F5D06F"))
+	vb.add_child(_trade_confirm_title_label)
+
+	var g_box: PanelContainer = PanelContainer.new()
+	var g_sb: StyleBoxFlat = _make_panel_style("#102219", "#52B788", 10, 1)
+	g_sb.content_margin_left = 14.0
+	g_sb.content_margin_right = 14.0
+	g_sb.content_margin_top = 10.0
+	g_sb.content_margin_bottom = 10.0
+	g_box.add_theme_stylebox_override("panel", g_sb)
+	vb.add_child(g_box)
+	_trade_confirm_gives_label = Label.new()
+	_trade_confirm_gives_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_trade_confirm_gives_label.add_theme_font_size_override("font_size", _fs(14.0))
+	_trade_confirm_gives_label.add_theme_color_override("font_color", Color("#C9FFE1"))
+	g_box.add_child(_trade_confirm_gives_label)
+
+	var r_box: PanelContainer = PanelContainer.new()
+	var r_sb: StyleBoxFlat = _make_panel_style("#231819", "#FF8FA3", 10, 1)
+	r_sb.content_margin_left = 14.0
+	r_sb.content_margin_right = 14.0
+	r_sb.content_margin_top = 10.0
+	r_sb.content_margin_bottom = 10.0
+	r_box.add_theme_stylebox_override("panel", r_sb)
+	vb.add_child(r_box)
+	_trade_confirm_receives_label = Label.new()
+	_trade_confirm_receives_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_trade_confirm_receives_label.add_theme_font_size_override("font_size", _fs(14.0))
+	_trade_confirm_receives_label.add_theme_color_override("font_color", Color("#FFD6DE"))
+	r_box.add_child(_trade_confirm_receives_label)
+
+	var btn_row: HBoxContainer = HBoxContainer.new()
+	btn_row.add_theme_constant_override("separation", 10)
+	vb.add_child(btn_row)
+
+	var btn_reject: Button = Button.new()
+	btn_reject.text = "Recusar Proposta"
+	btn_reject.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(btn_reject, "#4A2124", "#662D31", "#331618", "#FF758F", Color("#FFE8E8"), false, _bh(46.0), _fs(14.0), 10.0, true)
+	btn_reject.pressed.connect(func() -> void:
+		var oid: int = _trade_confirm_offer_id
+		hide_trade_confirm_modal()
+		trade_offer_responded.emit(oid, false)
+	)
+	btn_row.add_child(btn_reject)
+
+	var btn_accept: Button = Button.new()
+	btn_accept.text = "Aceitar Troca"
+	btn_accept.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(btn_accept, "#227557", "#2C946E", "#185740", "#A8FF78", Color.WHITE, true, _bh(46.0), _fs(14.0), 10.0, true)
+	btn_accept.pressed.connect(func() -> void:
+		var oid: int = _trade_confirm_offer_id
+		hide_trade_confirm_modal()
+		trade_offer_responded.emit(oid, true)
+	)
+	btn_row.add_child(btn_accept)
+
+func show_trade_confirm_modal(offer_data: Dictionary) -> void:
+	if _trade_confirm_overlay == null:
+		return
+	_trade_confirm_offer_id = int(offer_data.get("offer_id", -1))
+	var s_name: String = str(offer_data.get("sender_name", "Estanceiro"))
+	var t_name: String = str(offer_data.get("target_name", "Você"))
+	_trade_confirm_title_label.text = "%s propôs uma troca para %s" % [s_name, t_name]
+	_trade_confirm_gives_label.text = "Você recebe de %s:\n%s" % [s_name, str(offer_data.get("gives_text", "-"))]
+	_trade_confirm_receives_label.text = "Você entrega em contrapartida:\n%s" % str(offer_data.get("receives_text", "-"))
+	_trade_confirm_overlay.move_to_front()
+	_trade_confirm_overlay.visible = true
+
+func hide_trade_confirm_modal() -> void:
+	if _trade_confirm_overlay != null:
+		_trade_confirm_overlay.visible = false
+	_trade_confirm_offer_id = -1
+
+# 2C. Modal Dedicado de Leilão Periódico de Terrenos
+func _build_auction_modal() -> void:
+	_auction_overlay = _create_modal_backdrop(Callable())
+
+	var center: CenterContainer = CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_auction_overlay.add_child(center)
+
+	var card: PanelContainer = PanelContainer.new()
+	card.custom_minimum_size = Vector2(620.0 if _is_touch_mode else 560.0, 0.0)
+	var card_style: StyleBoxFlat = _make_panel_style("#111D17", "#F5D06F", 18, 2)
+	card_style.shadow_size = 28
+	card_style.shadow_color = Color(0.0, 0.0, 0.0, 0.72)
+	card.add_theme_stylebox_override("panel", card_style)
+	center.add_child(card)
+
+	var main_vb: VBoxContainer = VBoxContainer.new()
+	main_vb.add_theme_constant_override("separation", 0)
+	card.add_child(main_vb)
+
+	_auction_banner = PanelContainer.new()
+	var ab_sb: StyleBoxFlat = StyleBoxFlat.new()
+	ab_sb.bg_color = Color("#2D5248")
+	ab_sb.corner_radius_top_left = 16
+	ab_sb.corner_radius_top_right = 16
+	_auction_banner.add_theme_stylebox_override("panel", ab_sb)
+	main_vb.add_child(_auction_banner)
+
+	var bm: MarginContainer = MarginContainer.new()
+	bm.add_theme_constant_override("margin_left", 22)
+	bm.add_theme_constant_override("margin_right", 22)
+	bm.add_theme_constant_override("margin_top", 14)
+	bm.add_theme_constant_override("margin_bottom", 14)
+	_auction_banner.add_child(bm)
+
+	var b_vb: VBoxContainer = VBoxContainer.new()
+	b_vb.add_theme_constant_override("separation", 3)
+	bm.add_child(b_vb)
+
+	var hdr_tag: Label = Label.new()
+	hdr_tag.text = "LEILÃO PERIÓDICO DO PAMPA"
+	hdr_tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		hdr_tag.add_theme_font_override("font", _bold_font)
+	hdr_tag.add_theme_font_size_override("font_size", _fs(11.5))
+	hdr_tag.add_theme_color_override("font_color", Color("#FFF3C4"))
+	b_vb.add_child(hdr_tag)
+
+	_auction_title_label = Label.new()
+	_auction_title_label.text = "Terreno"
+	_auction_title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		_auction_title_label.add_theme_font_override("font", _bold_font)
+	_auction_title_label.add_theme_font_size_override("font_size", _fs(21.0))
+	_auction_title_label.add_theme_color_override("font_color", Color.WHITE)
+	b_vb.add_child(_auction_title_label)
+
+	var body_m: MarginContainer = MarginContainer.new()
+	body_m.add_theme_constant_override("margin_left", 24)
+	body_m.add_theme_constant_override("margin_right", 24)
+	body_m.add_theme_constant_override("margin_top", 16)
+	body_m.add_theme_constant_override("margin_bottom", 20)
+	main_vb.add_child(body_m)
+
+	var vb: VBoxContainer = VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 12)
+	body_m.add_child(vb)
+
+	_auction_meta_label = Label.new()
+	_auction_meta_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_auction_meta_label.add_theme_font_size_override("font_size", _fs(13.5))
+	_auction_meta_label.add_theme_color_override("font_color", Color("#BDD3C6"))
+	vb.add_child(_auction_meta_label)
+
+	var bid_card: PanelContainer = PanelContainer.new()
+	var bid_sb: StyleBoxFlat = _make_panel_style("#0B1410", "#355043", 10, 1)
+	bid_sb.content_margin_left = 14.0
+	bid_sb.content_margin_right = 14.0
+	bid_sb.content_margin_top = 12.0
+	bid_sb.content_margin_bottom = 12.0
+	bid_card.add_theme_stylebox_override("panel", bid_sb)
+	vb.add_child(bid_card)
+
+	_auction_bid_label = Label.new()
+	_auction_bid_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_auction_bid_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	if _bold_font != null:
+		_auction_bid_label.add_theme_font_override("font", _bold_font)
+	_auction_bid_label.add_theme_font_size_override("font_size", _fs(16.0))
+	_auction_bid_label.add_theme_color_override("font_color", Color("#F8D568"))
+	bid_card.add_child(_auction_bid_label)
+
+	_auction_turn_label = Label.new()
+	_auction_turn_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_auction_turn_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_auction_turn_label.add_theme_font_size_override("font_size", _fs(14.0))
+	_auction_turn_label.add_theme_color_override("font_color", Color("#90E0EF"))
+	vb.add_child(_auction_turn_label)
+
+	var bid_row: HBoxContainer = HBoxContainer.new()
+	bid_row.add_theme_constant_override("separation", 8)
+	vb.add_child(bid_row)
+
+	var btn_h: float = _bh(44.0)
+	_auction_btn_min = Button.new()
+	_auction_btn_min.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_auction_btn_min, "#227557", "#2C946E", "#185740", "#A8FF78", Color.WHITE, true, btn_h, _fs(13.0), 6.0, true)
+	_auction_btn_min.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val))
+	bid_row.add_child(_auction_btn_min)
+
+	_auction_btn_20 = Button.new()
+	_auction_btn_20.text = "+R$ 20"
+	_auction_btn_20.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_auction_btn_20, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
+	_auction_btn_20.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 20))
+	bid_row.add_child(_auction_btn_20)
+
+	_auction_btn_50 = Button.new()
+	_auction_btn_50.text = "+R$ 50"
+	_auction_btn_50.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_auction_btn_50, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
+	_auction_btn_50.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 50))
+	bid_row.add_child(_auction_btn_50)
+
+	_auction_btn_100 = Button.new()
+	_auction_btn_100.text = "+R$ 100"
+	_auction_btn_100.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_auction_btn_100, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
+	_auction_btn_100.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 100))
+	bid_row.add_child(_auction_btn_100)
+
+	_auction_btn_pass = Button.new()
+	_auction_btn_pass.text = "Desistir do Leilão"
+	_apply_button_theme(_auction_btn_pass, "#4A2124", "#662D31", "#331618", "#FF758F", Color("#FFE8E8"), false, _bh(42.0), _fs(13.5), 10.0, true)
+	_auction_btn_pass.pressed.connect(func() -> void: auction_pass_submitted.emit())
+	vb.add_child(_auction_btn_pass)
+
+func refresh_auction_modal(auction_data: Dictionary, local_player_id: int, is_online: bool) -> void:
+	if _auction_overlay == null:
+		return
+	if auction_data.is_empty() or not bool(auction_data.get("active", false)):
+		hide_auction_modal()
+		return
+
+	var tile_name: String = str(auction_data.get("tile_name", "Terreno"))
+	var base_price: int = int(auction_data.get("tile_price", 0))
+	var min_open: int = int(auction_data.get("min_bid", 20))
+	var cur_bid: int = int(auction_data.get("current_bid", 0))
+	var high_name: String = str(auction_data.get("highest_bidder_name", ""))
+	var color_hex: String = str(auction_data.get("color_hex", "#2D5248"))
+
+	var ab_sb: StyleBoxFlat = StyleBoxFlat.new()
+	ab_sb.bg_color = Color(color_hex)
+	ab_sb.corner_radius_top_left = 16
+	ab_sb.corner_radius_top_right = 16
+	_auction_banner.add_theme_stylebox_override("panel", ab_sb)
+	_auction_title_label.text = tile_name
+	_auction_meta_label.text = "Valor de tabela: %s • Lance mínimo inicial: %s" % [_format_brl(base_price), _format_brl(min_open)]
+	_auction_bid_label.text = TradeAndAuctionHelper.format_auction_status(cur_bid, min_open, high_name)
+
+	_auction_min_next_val = min_open if cur_bid <= 0 else (cur_bid + 10)
+	var elig: Array = auction_data.get("eligible_ids", [])
+	var t_idx: int = clampi(int(auction_data.get("turn_bidder_index", 0)), 0, maxi(0, elig.size() - 1))
+	var bidder_id: int = int(elig[t_idx]) if not elig.is_empty() else -1
+
+	var bidder_name: String = "Estanceiro"
+	var bidder_is_bot: bool = false
+	var bidder_money: int = 0
+	for p: Dictionary in _cached_players:
+		if int(p.get("id", -1)) == bidder_id:
+			bidder_name = str(p.get("name", "Estanceiro"))
+			bidder_is_bot = bool(p.get("is_bot", false))
+			bidder_money = int(p.get("money", 0))
+			break
+
+	var can_local_act: bool = (bidder_id >= 0 and not bidder_is_bot)
+	if is_online:
+		can_local_act = can_local_act and (bidder_id == local_player_id)
+
+	if bidder_is_bot:
+		_auction_turn_label.text = "Vez de %s [BOT] decidir o lance..." % bidder_name
+	elif can_local_act:
+		_auction_turn_label.text = "Sua vez (%s • Saldo: %s): cubra ou desista!" % [bidder_name, _format_brl(bidder_money)]
+	else:
+		_auction_turn_label.text = "Aguardando lance de %s..." % bidder_name
+
+	_auction_btn_min.text = "Cobrir %s" % _format_brl(_auction_min_next_val)
+	_auction_btn_min.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val)
+	_auction_btn_20.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val + 20)
+	_auction_btn_50.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val + 50)
+	_auction_btn_100.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val + 100)
+	_auction_btn_pass.disabled = not can_local_act
+
+	_auction_overlay.move_to_front()
+	_auction_overlay.visible = true
+
+func hide_auction_modal() -> void:
+	if _auction_overlay != null:
+		_auction_overlay.visible = false
 	_trade_cash_value = 0
 	hide_trade_modal()
 
@@ -2678,6 +3115,32 @@ func _build_settings_modal() -> void:
 		toast_row.add_child(t_btn)
 		_settings_toast_btns[t_key] = t_btn
 
+	# Leilão Periódico de Terrenos
+	var auc_lbl: Label = Label.new()
+	auc_lbl.text = "Leilão periódico de terrenos livres:"
+	auc_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	auc_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s2_vb.add_child(auc_lbl)
+
+	var auc_row: HBoxContainer = HBoxContainer.new()
+	auc_row.add_theme_constant_override("separation", 8)
+	s2_vb.add_child(auc_row)
+	_settings_auction_btns.clear()
+	var auc_specs: Array[Array] = [
+		["0", "Desativado"],
+		["3", "A cada 3 rodadas"],
+		["4", "A cada 4 rodadas"]
+	]
+	for spec: Array in auc_specs:
+		var a_key: String = str(spec[0])
+		var a_val: int = int(a_key)
+		var a_btn: Button = Button.new()
+		a_btn.text = str(spec[1])
+		a_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		a_btn.pressed.connect(func() -> void: _set_global_pref("auction_interval_rounds", a_val))
+		auc_row.add_child(a_btn)
+		_settings_auction_btns[a_key] = a_btn
+
 	var btn_done: Button = Button.new()
 	btn_done.text = "Concluir" if _is_touch_mode else "Concluir [ESC]"
 	_apply_button_theme(btn_done, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), true, _bh(44.0), _fs(14.5), 14.0, true)
@@ -2856,6 +3319,10 @@ func _refresh_settings_ui() -> void:
 	var toasts_on: bool = bool(_prefs_cache.get("show_event_toasts", true))
 	for t_key: String in _settings_toast_btns.keys():
 		_style_seg_btn(_settings_toast_btns[t_key], (t_key == "on") == toasts_on)
+
+	var auc_interval: String = str(int(_prefs_cache.get("auction_interval_rounds", 3)))
+	for a_key: String in _settings_auction_btns.keys():
+		_style_seg_btn(_settings_auction_btns[a_key], a_key == auc_interval)
 
 # 8. Modal de Carteira / Escrituras do Estanceiro (Adversários ou Próprio Jogador)
 func _build_portfolio_modal() -> void:
@@ -3203,6 +3670,8 @@ func hide_all_modals() -> void:
 	hide_settings_modal()
 	hide_deed_modal()
 	hide_trade_modal()
+	hide_trade_confirm_modal()
+	hide_auction_modal()
 	hide_pause_modal()
 	hide_help_modal()
 	hide_victory_modal()

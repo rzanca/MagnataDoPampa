@@ -596,15 +596,22 @@ func evaluate_bot_trade_offer(
 	var buildings_map: Dictionary = board_state.get("property_buildings", {})
 	var mortgaged_map: Dictionary = board_state.get("mortgaged_tiles", {})
 
-	if request_tile < 0 or request_tile >= tiles_arr.size():
+	# Exigir contrapartida mínima real e impedir venda/troca se algum grupo envolvido tiver construções
+	if offer_tile < 0 and request_tile < 0:
 		return false
-	if int(owners_map.get(request_tile, -1)) != receiver_id:
+	if request_tile >= 0 and offer_tile < 0 and cash_delta <= 0:
 		return false
-	if _group_has_any_building(request_tile, tiles_arr, buildings_map):
+	if offer_tile >= 0 and request_tile < 0 and cash_delta >= 0:
 		return false
-	# Nunca entrega terreno de um monopólio que o destinatário já completou
-	if _is_in_complete_monopoly_dict(receiver_id, request_tile, tiles_arr, owners_map):
-		return false
+
+	if request_tile >= 0:
+		if request_tile >= tiles_arr.size() or int(owners_map.get(request_tile, -1)) != receiver_id:
+			return false
+		if _group_has_any_building(request_tile, tiles_arr, buildings_map):
+			return false
+		# Nunca entrega terreno de um monopólio que o destinatário já completou
+		if _is_in_complete_monopoly_dict(receiver_id, request_tile, tiles_arr, owners_map):
+			return false
 
 	if offer_tile >= 0:
 		if offer_tile >= tiles_arr.size() or int(owners_map.get(offer_tile, -1)) != proposer_id:
@@ -634,7 +641,19 @@ func evaluate_bot_trade_offer(
 			if int(off_stats["total"]) > 0 and int(off_stats["self"]) == int(off_stats["total"]) - 1:
 				receiver_completes_monopoly = true
 
-	var given_val: float = _estimate_tile_strategic_value(request_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, false)
+	var given_val: float = 0.0
+	if request_tile >= 0:
+		given_val = _estimate_tile_strategic_value(request_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, false)
+
+	# Caso especial: humano está vendendo um lote para o Bot por dinheiro (request_tile == -1, cash_delta < 0)
+	if request_tile < 0 and offer_tile >= 0 and cash_delta < 0:
+		var buy_reserve: int = get_buy_reserve(profile)
+		if receiver_money_after < buy_reserve and not receiver_completes_monopoly:
+			return false
+		var purchase_cost: float = float(absi(cash_delta))
+		var offer_strategic: float = _estimate_tile_strategic_value(offer_tile, receiver_id, tiles_arr, owners_map, mortgaged_map, true)
+		var max_pay_ratio: float = 1.15 if receiver_completes_monopoly else 0.98
+		return offer_strategic * max_pay_ratio >= purchase_cost
 
 	# Penalidade se a entrega completa o monopólio do proposer (amenizada se receiver também completa monopólio ou precisa de caixa)
 	var req_data: Dictionary = tiles_arr[request_tile]
@@ -797,6 +816,57 @@ func _is_in_complete_monopoly(
 			if property_owners.get(i, -1) != player_id:
 				return false
 	return count > 0
+
+func choose_auction_bid(
+	bot: Dictionary,
+	tile: Dictionary,
+	tile_index: int,
+	current_bid: int,
+	min_next_bid: int,
+	board_state: Dictionary
+) -> int:
+	if bool(bot.get("bankrupt", false)):
+		return 0
+	var money: int = int(bot.get("money", 0))
+	if money < min_next_bid:
+		return 0
+
+	var bot_id: int = int(bot.get("id", -1))
+	var profile: String = str(bot.get("bot_profile", PROFILE_CONSERVADOR))
+	var tiles_arr: Array[Dictionary] = _extract_tiles(board_state)
+	var owners_map: Dictionary = board_state.get("property_owners", {})
+	var mortgaged_map: Dictionary = board_state.get("mortgaged_tiles", {})
+
+	var base_price: int = int(tile.get("price", 100))
+	var strategic_val: float = _estimate_tile_strategic_value(
+		tile_index, bot_id, tiles_arr, owners_map, mortgaged_map, true
+	)
+	if strategic_val <= 0.0:
+		strategic_val = float(base_price)
+
+	var mult: float = 1.05
+	match profile:
+		PROFILE_AGRESSIVO:
+			mult = 1.24
+		PROFILE_CONSERVADOR:
+			mult = 0.88
+		PROFILE_MONOPOLISTA:
+			mult = 1.28
+		PROFILE_IMOBILIARIO:
+			mult = 1.12
+		PROFILE_ESPECULADOR:
+			mult = 1.15
+
+	var reserve: int = maxi(80, floori(float(get_buy_reserve(profile)) * 0.7))
+	var max_by_cash: int = maxi(0, money - reserve)
+	var max_willing: int = mini(max_by_cash, roundi((strategic_val * mult) / 10.0) * 10)
+	if min_next_bid > max_willing:
+		return 0
+
+	var jump: int = 0
+	if current_bid > 0 and (profile == PROFILE_AGRESSIVO or profile == PROFILE_MONOPOLISTA) and (min_next_bid + 20) <= max_willing:
+		jump = 20
+	return mini(money, min_next_bid + jump)
 
 func _extract_tiles(board_state: Dictionary) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []

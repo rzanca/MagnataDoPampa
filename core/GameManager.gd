@@ -68,6 +68,11 @@ var network: NetworkManagerClass = null
 var _active_net_session_id: int = 0
 var _applying_remote_state: bool = false
 var _last_victory_info: Dictionary = {}
+var _pending_trade_offer: Dictionary = {}
+var _next_trade_offer_id: int = 1
+var _auction_state: Dictionary = {}
+var _pending_periodic_auction: bool = false
+var _auction_bot_token: int = 0
 
 var _last_tile_summary: String = "Configure a partida para começar"
 var _selected_property_tile: int = -1
@@ -87,6 +92,7 @@ var _preferences: Dictionary = {
 	"camera_follow": true,
 	"ui_comfort_scale": "normal",
 	"show_event_toasts": true,
+	"auction_interval_rounds": 3,
 	"player_chance_overrides": {}
 }
 
@@ -258,6 +264,9 @@ func _setup_visuals() -> void:
 	hud.mortgage_pressed.connect(_on_human_mortgage_pressed)
 	hud.end_turn_pressed.connect(_on_human_end_turn_pressed)
 	hud.trade_executed.connect(_on_human_trade_executed)
+	hud.trade_offer_responded.connect(_on_human_trade_offer_responded)
+	hud.auction_bid_submitted.connect(_on_human_auction_bid_submitted)
+	hud.auction_pass_submitted.connect(_on_human_auction_pass_submitted)
 	hud.menu_requested.connect(open_setup_screen)
 	hud.restart_match_requested.connect(_on_restart_match_requested)
 	hud.camera_toggle_requested.connect(toggle_camera_view)
@@ -423,9 +432,13 @@ func open_setup_screen() -> void:
 
 	_match_session_token += 1
 	_bot_turn_token += 1
+	_auction_bot_token += 1
 	_is_bot_thinking = false
 	_is_animating = false
 	_match_active = false
+	_pending_trade_offer.clear()
+	_auction_state.clear()
+	_pending_periodic_auction = false
 	_last_victory_info.clear()
 	if board_view != null:
 		board_view.cancel_animations()
@@ -531,6 +544,10 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	property_owners.clear()
 	property_buildings.clear()
 	mortgaged_tiles.clear()
+	_pending_trade_offer.clear()
+	_auction_state.clear()
+	_pending_periodic_auction = false
+	_auction_bot_token += 1
 	_last_victory_info.clear()
 	current_player_index = 0
 	current_state = TurnState.WAITING_ROLL
@@ -571,17 +588,31 @@ func _on_tile_inspected(tile_idx: int) -> void:
 	var group_name: String = str(tile.get("group", ""))
 	var has_monopoly: bool = is_owned and _has_monopoly(owner_id, group_name)
 
+	var can_trade_this_tile: bool = (
+		is_owned
+		and not _is_auction_active()
+		and _can_open_trade()
+		and not _group_has_buildings(tile_idx)
+		and not players.is_empty()
+		and current_player_index >= 0
+		and current_player_index < players.size()
+		and owner_id != int(players[current_player_index].get("id", -1))
+		and not _is_human_input_blocked()
+	)
 	var info: Dictionary = {
+		"tile_index": tile_idx,
 		"tile": tile,
 		"mortgage_value": _get_mortgage_value(tile),
 		"redeem_cost": _get_redeem_cost(tile),
 		"is_owned": is_owned,
+		"owner_id": owner_id,
 		"owner_name": owner_name,
 		"owner_pawn": owner_pawn,
 		"owner_color": owner_color,
 		"is_mortgaged": mortgaged_tiles.get(tile_idx, false),
 		"building_level": property_buildings.get(tile_idx, 0),
-		"has_monopoly": has_monopoly
+		"has_monopoly": has_monopoly,
+		"can_propose_trade": can_trade_this_tile
 	}
 	hud.show_deed_modal(info)
 
@@ -725,9 +756,43 @@ func _is_local_players_turn() -> bool:
 func _is_human_input_blocked() -> bool:
 	if not _match_active or _is_animating or _is_bot_thinking or _is_current_player_bot_owner() or current_state == TurnState.MOVING:
 		return true
+	if _is_auction_active():
+		return true
 	if _is_online_match() and not _is_local_players_turn():
 		return true
 	return false
+
+func _is_auction_active() -> bool:
+	return bool(_auction_state.get("active", false))
+
+func _on_human_trade_offer_responded(offer_id: int, accepted: bool) -> void:
+	if not _match_active:
+		return
+	if _is_network_client():
+		network.send_action_to_host("TRADE_RESPOND", {
+			"offer_id": offer_id,
+			"accept": accepted
+		})
+		return
+	respond_to_trade_offer(offer_id, accepted)
+
+func _on_human_auction_bid_submitted(bid_amount: int) -> void:
+	if not _match_active or not _is_auction_active():
+		return
+	if _is_network_client():
+		network.send_action_to_host("AUCTION_BID", { "amount": bid_amount })
+		return
+	var bidder_id: int = _get_auction_current_bidder_id()
+	submit_auction_bid(bidder_id, bid_amount)
+
+func _on_human_auction_pass_submitted() -> void:
+	if not _match_active or not _is_auction_active():
+		return
+	if _is_network_client():
+		network.send_action_to_host("AUCTION_PASS", {})
+		return
+	var bidder_id: int = _get_auction_current_bidder_id()
+	pass_auction_turn(bidder_id)
 
 func _on_human_roll_pressed() -> void:
 	if _is_human_input_blocked():
@@ -949,7 +1014,7 @@ func _get_current_player_money() -> int:
 	return int(players[current_player_index].get("money", 0))
 
 func _can_open_trade() -> bool:
-	if not _match_active or _is_animating or players.is_empty():
+	if not _match_active or _is_animating or _is_auction_active() or not _pending_trade_offer.is_empty() or players.is_empty():
 		return false
 	if current_player_index < 0 or current_player_index >= players.size():
 		return false
@@ -964,7 +1029,7 @@ func _can_open_trade() -> bool:
 	return valid_phase and _count_active_players() > 1
 
 func _can_roll_dice() -> bool:
-	if not _match_active or _is_animating or players.is_empty() or tiles.is_empty():
+	if not _match_active or _is_animating or _is_auction_active() or players.is_empty() or tiles.is_empty():
 		return false
 	var player: Dictionary = players[current_player_index]
 	if bool(player.get("bankrupt", false)) or int(player.get("money", 0)) < 0:
@@ -1241,6 +1306,10 @@ func _advance_round_if_complete(finished_player_id: int) -> void:
 		return
 	current_round += 1
 	_acted_in_current_round.clear()
+	var auction_interval: int = int(_preferences.get("auction_interval_rounds", 3))
+	if not _applying_remote_state and not _is_network_client() and auction_interval > 0 and current_round >= auction_interval and current_round % auction_interval == 0:
+		if _count_unowned_buyables() > 0 and _count_active_players() >= 2:
+			_pending_periodic_auction = true
 	if current_round % TRADE_CYCLE_INTERVAL == 0:
 		_log_both("=== Rodada %d • Feira de Negócios: estanceiros mais abertos a trocas e obras! ===" % current_round)
 		_broadcast_toast_event("Rodada %d • Feira de Negócios!" % current_round, "Ciclo ativo: trocas estratégicas e obras aquecidas na mesa.", "turn")
@@ -2336,6 +2405,12 @@ func _advance_turn_after_bankruptcy(finished_player_id: int) -> void:
 	_is_bot_thinking = false
 	_is_animating = false
 	_bot_traded_this_turn = false
+	if not _pending_trade_offer.is_empty():
+		_pending_trade_offer.clear()
+		if hud != null:
+			hud.hide_trade_confirm_modal()
+		if _is_network_host():
+			network.broadcast_match_event(_active_net_session_id, "TRADE_OFFER_CLOSED", {})
 
 	_advance_round_if_complete(finished_player_id)
 
@@ -2365,6 +2440,10 @@ func _advance_turn_after_bankruptcy(finished_player_id: int) -> void:
 	_sync_hud()
 	if hud != null:
 		hud.flash_action_feedback("turn")
+	if _pending_periodic_auction:
+		_pending_periodic_auction = false
+		if start_periodic_land_auction():
+			return
 	call_deferred("_maybe_start_bot_turn")
 
 func end_turn() -> void:
@@ -2395,46 +2474,169 @@ func end_turn() -> void:
 
 	_advance_turn_after_bankruptcy(int(current_player["id"]))
 
-func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
-	if not _match_active or _is_animating or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
-		return
-	if offer_tile < 0 and request_tile < 0 and cash_delta == 0:
-		_log_both("Troca negada: selecione pelo menos uma escritura ou valor em dinheiro.")
-		return
+func _validate_trade_proposal(
+	sender_id: int,
+	target_id: int,
+	offer_tile: int,
+	request_tile: int,
+	cash_delta: int
+) -> Dictionary:
+	if not _match_active or _is_animating or _is_auction_active() or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+		return { "ok": false, "reason": "Negociação indisponível neste momento." }
+	if offer_tile < 0 and request_tile < 0:
+		return { "ok": false, "reason": "Troca negada: selecione pelo menos uma escritura (transferência só em dinheiro é bloqueada)." }
+	if request_tile >= 0 and offer_tile < 0 and cash_delta <= 0:
+		return { "ok": false, "reason": "Troca negada: ofereça uma escritura ou dinheiro pelo lote pedido." }
+	if offer_tile >= 0 and request_tile < 0 and cash_delta >= 0:
+		return { "ok": false, "reason": "Troca negada: peça uma escritura ou pagamento em dinheiro pelo lote ofertado." }
 
-	var sender: Dictionary = players[current_player_index]
-	var sender_id: int = int(sender["id"])
-	if sender_id == target_id or bool(sender.get("bankrupt", false)):
-		return
-
+	var sender: Dictionary = _get_player_by_id(sender_id)
 	var target: Dictionary = _get_player_by_id(target_id)
-	if target.is_empty() or bool(target.get("bankrupt", false)):
-		return
+	if sender.is_empty() or target.is_empty() or sender_id == target_id:
+		return { "ok": false, "reason": "Troca negada: participante inválido." }
+	if bool(sender.get("bankrupt", false)) or bool(target.get("bankrupt", false)):
+		return { "ok": false, "reason": "Troca negada: participante falido." }
 
 	if offer_tile >= 0:
 		if offer_tile >= tiles.size() or property_owners.get(offer_tile, -1) != sender_id:
-			_log_both("Troca negada: você não é dono dessa escritura.")
-			return
+			return { "ok": false, "reason": "Troca negada: você não é dono dessa escritura." }
 		if _group_has_buildings(offer_tile):
-			_log_both("Troca negada: remova as construções do grupo antes de trocar.")
-			return
+			return { "ok": false, "reason": "Troca negada: remova as construções do grupo antes de trocar." }
 
 	if request_tile >= 0:
 		if request_tile >= tiles.size() or property_owners.get(request_tile, -1) != target_id:
-			_log_both("Troca negada: o outro jogador não possui essa escritura.")
-			return
+			return { "ok": false, "reason": "Troca negada: o outro jogador não possui essa escritura." }
 		if _group_has_buildings(request_tile):
-			_log_both("Troca negada: propriedade em grupo com construção não pode ser trocada.")
-			return
+			return { "ok": false, "reason": "Troca negada: propriedade em grupo com construção não pode ser trocada." }
 
 	if cash_delta > 0 and int(sender["money"]) < cash_delta:
-		_log_both("Troca negada: saldo insuficiente para dar R$ %d." % cash_delta)
-		return
+		return { "ok": false, "reason": "Troca negada: saldo insuficiente para dar R$ %d." % cash_delta }
 	var abs_cash: int = absi(cash_delta)
 	if cash_delta < 0 and int(target["money"]) < abs_cash:
-		_log_both("Troca negada: %s não tem R$ %d em caixa." % [str(target["name"]), abs_cash])
+		return { "ok": false, "reason": "Troca negada: %s não tem R$ %d em caixa." % [str(target["name"]), abs_cash] }
+
+	return { "ok": true, "reason": "" }
+
+func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
+	propose_trade(target_id, offer_tile, request_tile, cash_delta)
+
+func propose_trade(target_id: int, offer_tile: int, request_tile: int, cash_delta: int) -> void:
+	if not _match_active or players.is_empty():
+		return
+	if not _pending_trade_offer.is_empty():
+		_log_both("Já existe uma proposta de troca aguardando confirmação.")
+		return
+	var sender: Dictionary = players[current_player_index]
+	var sender_id: int = int(sender["id"])
+	var check: Dictionary = _validate_trade_proposal(sender_id, target_id, offer_tile, request_tile, cash_delta)
+	if not bool(check.get("ok", false)):
+		_log_both(str(check.get("reason", "Troca inválida.")))
 		return
 
+	var target: Dictionary = _get_player_by_id(target_id)
+	if bool(target.get("is_bot", false)):
+		var accepted_by_bot: bool = bot_ai.evaluate_bot_trade_offer(
+			target,
+			sender,
+			offer_tile,
+			request_tile,
+			cash_delta,
+			_build_bot_board_state(),
+			current_round,
+			is_market_push_round()
+		)
+		if accepted_by_bot:
+			_commit_trade_agreement(sender_id, target_id, offer_tile, request_tile, cash_delta)
+		else:
+			_log_both("%s [BOT] recusou a proposta de troca." % str(target["name"]))
+			_broadcast_toast_event("Proposta Recusada", "%s [BOT] não aceitou os termos da negociação." % str(target["name"]), "warning")
+		return
+
+	var offer_id: int = _next_trade_offer_id
+	_next_trade_offer_id += 1
+	var offer_name: String = str(tiles[offer_tile]["name"]) if (offer_tile >= 0 and offer_tile < tiles.size()) else ""
+	var req_name: String = str(tiles[request_tile]["name"]) if (request_tile >= 0 and request_tile < tiles.size()) else ""
+	var abs_cash: int = absi(cash_delta)
+	var sender_items: Array[String] = []
+	var target_items: Array[String] = []
+	if offer_name != "":
+		sender_items.append(offer_name)
+	if cash_delta > 0:
+		sender_items.append("R$ %d" % cash_delta)
+	if req_name != "":
+		target_items.append(req_name)
+	if cash_delta < 0:
+		target_items.append("R$ %d" % abs_cash)
+
+	_pending_trade_offer = {
+		"offer_id": offer_id,
+		"sender_id": sender_id,
+		"target_id": target_id,
+		"sender_name": str(sender["name"]),
+		"target_name": str(target["name"]),
+		"target_peer_id": int(target.get("peer_id", 1)),
+		"offer_tile": offer_tile,
+		"request_tile": request_tile,
+		"cash_delta": cash_delta,
+		"gives_text": " + ".join(sender_items) if not sender_items.is_empty() else "Nada",
+		"receives_text": " + ".join(target_items) if not target_items.is_empty() else "Nada"
+	}
+
+	_log_both("%s enviou proposta de troca para %s (aguardando aceite)." % [str(sender["name"]), str(target["name"])])
+
+	var target_peer: int = int(target.get("peer_id", 1))
+	if _is_network_host() and target_peer > 1:
+		network.send_match_event_to_peer(target_peer, _active_net_session_id, "TRADE_OFFER", _pending_trade_offer.duplicate(true))
+		_broadcast_toast_event("Proposta Enviada!", "Aguardando %s aceitar ou recusar a troca." % str(target["name"]), "turn")
+	elif hud != null:
+		hud.hide_trade_modal()
+		hud.show_trade_confirm_modal(_pending_trade_offer.duplicate(true))
+
+func respond_to_trade_offer(offer_id: int, accepted: bool) -> void:
+	if _pending_trade_offer.is_empty():
+		return
+	if int(_pending_trade_offer.get("offer_id", -1)) != offer_id:
+		return
+
+	var offer: Dictionary = _pending_trade_offer.duplicate(true)
+	_pending_trade_offer.clear()
+	if hud != null:
+		hud.hide_trade_confirm_modal()
+	if _is_network_host():
+		network.broadcast_match_event(_active_net_session_id, "TRADE_OFFER_CLOSED", {})
+
+	var sender_id: int = int(offer.get("sender_id", -1))
+	var target_id: int = int(offer.get("target_id", -1))
+	var target_name: String = str(offer.get("target_name", "Estanceiro"))
+
+	if not accepted:
+		_log_both("%s recusou a proposta de troca." % target_name)
+		_broadcast_toast_event("Proposta Recusada", "%s recusou a negociação." % target_name, "warning")
+		return
+
+	var offer_tile: int = int(offer.get("offer_tile", -1))
+	var req_tile: int = int(offer.get("request_tile", -1))
+	var cash_delta: int = int(offer.get("cash_delta", 0))
+	var check: Dictionary = _validate_trade_proposal(sender_id, target_id, offer_tile, req_tile, cash_delta)
+	if not bool(check.get("ok", false)):
+		_log_both(str(check.get("reason", "Proposta expirou ou ficou inválida.")))
+		return
+
+	_commit_trade_agreement(sender_id, target_id, offer_tile, req_tile, cash_delta)
+
+func _commit_trade_agreement(
+	sender_id: int,
+	target_id: int,
+	offer_tile: int,
+	request_tile: int,
+	cash_delta: int
+) -> void:
+	var sender: Dictionary = _get_player_by_id(sender_id)
+	var target: Dictionary = _get_player_by_id(target_id)
+	if sender.is_empty() or target.is_empty():
+		return
+
+	var abs_cash: int = absi(cash_delta)
 	if cash_delta > 0:
 		sender["money"] = int(sender["money"]) - cash_delta
 		target["money"] = int(target["money"]) + cash_delta
@@ -2442,7 +2644,7 @@ func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delt
 		target["money"] = int(target["money"]) - abs_cash
 		sender["money"] = int(sender["money"]) + abs_cash
 
-	if int(sender["money"]) >= 0:
+	if int(sender["money"]) >= 0 and not players.is_empty() and int(players[current_player_index]["id"]) == sender_id:
 		_last_creditor_id = -1
 
 	var sender_props: Array = sender["properties"]
@@ -2498,6 +2700,238 @@ func execute_trade(target_id: int, offer_tile: int, request_tile: int, cash_delt
 	if hud != null:
 		hud.flash_action_feedback("positive")
 	_broadcast_toast_event("Negócio Fechado!", "%s ⇄ %s (%s ↔ %s)" % [sender_label, target_label, s_part, t_part], "positive")
+
+# --- Sistema de Leilão Periódico de Terrenos (a cada 3 ou 4 rodadas) ---
+
+func _pick_periodic_auction_tile() -> int:
+	var candidates: Array[int] = []
+	for i: int in range(tiles.size()):
+		var t: Dictionary = tiles[i]
+		var t_type: String = str(t.get("type", ""))
+		if (t_type == "PROPERTY" or t_type == "COMPANY") and not property_owners.has(i):
+			candidates.append(i)
+	if candidates.is_empty():
+		return -1
+	return candidates[randi_range(0, candidates.size() - 1)]
+
+func start_periodic_land_auction(forced_tile_idx: int = -1) -> bool:
+	if not _match_active or _is_network_client() or _is_auction_active() or current_state == TurnState.GAME_OVER:
+		return false
+	var tile_idx: int = forced_tile_idx if forced_tile_idx >= 0 else _pick_periodic_auction_tile()
+	if tile_idx < 0 or tile_idx >= tiles.size() or property_owners.has(tile_idx):
+		return false
+	var tile: Dictionary = tiles[tile_idx]
+	var t_type: String = str(tile.get("type", ""))
+	if t_type != "PROPERTY" and t_type != "COMPANY":
+		return false
+
+	var base_price: int = int(tile.get("price", 100))
+	var min_bid: int = maxi(20, roundi((float(base_price) * 0.5) / 10.0) * 10)
+	var eligible: Array[int] = []
+	for p: Dictionary in players:
+		if not bool(p.get("bankrupt", false)) and int(p.get("money", 0)) >= min_bid:
+			eligible.append(int(p["id"]))
+	if eligible.size() < 2:
+		return false
+
+	var color_hex: String = str(tile.get("color", "#2D5248"))
+	if color_hex == "":
+		color_hex = "#2D5248"
+
+	_auction_bot_token += 1
+	_auction_state = {
+		"active": true,
+		"tile_index": tile_idx,
+		"tile_name": str(tile.get("name", "Terreno")),
+		"tile_type": t_type,
+		"group_name": str(tile.get("group", "")),
+		"color_hex": color_hex,
+		"tile_price": base_price,
+		"min_bid": min_bid,
+		"current_bid": 0,
+		"highest_bidder_id": -1,
+		"highest_bidder_name": "",
+		"eligible_ids": eligible,
+		"passed_ids": [],
+		"turn_bidder_index": 0
+	}
+
+	_log_both("=== LEILÃO DA RODADA %d: %s (Preço base R$ %d • Lance inicial R$ %d)! ===" % [current_round, str(tile["name"]), base_price, min_bid])
+	_broadcast_toast_event("Leilão Aberto!", "%s em disputa a partir de R$ %d!" % [str(tile["name"]), min_bid], "turn")
+	_sync_auction_ui_and_network()
+	_maybe_step_auction_bot()
+	return true
+
+func _get_auction_current_bidder_id() -> int:
+	if not _is_auction_active():
+		return -1
+	var elig: Array = _auction_state.get("eligible_ids", [])
+	if elig.is_empty():
+		return -1
+	var idx: int = clampi(int(_auction_state.get("turn_bidder_index", 0)), 0, elig.size() - 1)
+	return int(elig[idx])
+
+func _get_auction_min_next_bid() -> int:
+	var cur: int = int(_auction_state.get("current_bid", 0))
+	var min_open: int = int(_auction_state.get("min_bid", 20))
+	return min_open if cur <= 0 else (cur + 10)
+
+func submit_auction_bid(bidder_id: int, bid_amount: int) -> void:
+	if not _is_auction_active():
+		return
+	var expected_id: int = _get_auction_current_bidder_id()
+	if bidder_id != expected_id or bidder_id < 0:
+		return
+	var bidder: Dictionary = _get_player_by_id(bidder_id)
+	if bidder.is_empty() or bool(bidder.get("bankrupt", false)):
+		pass_auction_turn(bidder_id)
+		return
+
+	var min_next: int = _get_auction_min_next_bid()
+	var bidder_money: int = int(bidder.get("money", 0))
+	if bid_amount < min_next or bid_amount > bidder_money:
+		_log_both("Lance inválido de %s (R$ %d)." % [str(bidder["name"]), bid_amount])
+		return
+
+	_auction_state["current_bid"] = bid_amount
+	_auction_state["highest_bidder_id"] = bidder_id
+	_auction_state["highest_bidder_name"] = "%s [BOT]" % str(bidder["name"]) if bool(bidder.get("is_bot", false)) else str(bidder["name"])
+
+	_log_both("Leilão: %s cobriu para R$ %d!" % [str(_auction_state["highest_bidder_name"]), bid_amount])
+	_advance_auction_turn(bidder_id)
+
+func pass_auction_turn(bidder_id: int) -> void:
+	if not _is_auction_active():
+		return
+	var expected_id: int = _get_auction_current_bidder_id()
+	if bidder_id != expected_id:
+		return
+
+	var bidder: Dictionary = _get_player_by_id(bidder_id)
+	var b_name: String = str(bidder.get("name", "Estanceiro"))
+	var elig: Array = _auction_state.get("eligible_ids", [])
+	var passed: Array = _auction_state.get("passed_ids", [])
+	if not (bidder_id in passed):
+		passed.append(bidder_id)
+	elig.erase(bidder_id)
+	_auction_state["eligible_ids"] = elig
+	_auction_state["passed_ids"] = passed
+
+	_log_both("Leilão: %s desistiu da disputa." % b_name)
+	_advance_auction_turn(-1)
+
+func _advance_auction_turn(just_bidder_id: int) -> void:
+	if not _is_auction_active():
+		return
+	var elig: Array = _auction_state.get("eligible_ids", [])
+	var winner_id: int = int(_auction_state.get("highest_bidder_id", -1))
+	var next_min: int = _get_auction_min_next_bid()
+
+	# Remover automaticamente quem não possui saldo para o próximo lance (exceto quem já detém o maior lance)
+	var filtered: Array[int] = []
+	for pid_var: Variant in elig:
+		var pid: int = int(pid_var)
+		var p: Dictionary = _get_player_by_id(pid)
+		if p.is_empty() or bool(p.get("bankrupt", false)):
+			continue
+		if pid == winner_id or int(p.get("money", 0)) >= next_min:
+			filtered.append(pid)
+	_auction_state["eligible_ids"] = filtered
+
+	if filtered.is_empty() or (filtered.size() == 1 and winner_id >= 0 and int(filtered[0]) == winner_id):
+		_finalize_auction()
+		return
+
+	var next_idx: int = 0
+	if just_bidder_id >= 0:
+		var pos_in_f: int = filtered.find(just_bidder_id)
+		next_idx = (pos_in_f + 1) % filtered.size() if pos_in_f >= 0 else 0
+	else:
+		next_idx = clampi(int(_auction_state.get("turn_bidder_index", 0)), 0, filtered.size() - 1)
+		if int(filtered[next_idx]) == winner_id and filtered.size() > 1:
+			next_idx = (next_idx + 1) % filtered.size()
+
+	_auction_state["turn_bidder_index"] = next_idx
+	_sync_auction_ui_and_network()
+	_maybe_step_auction_bot()
+
+func _finalize_auction() -> void:
+	if not _is_auction_active():
+		return
+	_auction_bot_token += 1
+	var tile_idx: int = int(_auction_state.get("tile_index", -1))
+	var tile_name: String = str(_auction_state.get("tile_name", "Terreno"))
+	var winner_id: int = int(_auction_state.get("highest_bidder_id", -1))
+	var winning_bid: int = int(_auction_state.get("current_bid", 0))
+	_auction_state.clear()
+
+	if winner_id >= 0 and winning_bid > 0 and tile_idx >= 0 and tile_idx < tiles.size() and not property_owners.has(tile_idx):
+		var winner: Dictionary = _get_player_by_id(winner_id)
+		if not winner.is_empty() and int(winner.get("money", 0)) >= winning_bid:
+			winner["money"] = int(winner["money"]) - winning_bid
+			property_owners[tile_idx] = winner_id
+			var w_props: Array = winner["properties"]
+			if not (tile_idx in w_props):
+				w_props.append(tile_idx)
+			property_purchased.emit(winner_id, tile_idx, winning_bid)
+			_log_both("Martelo batido! %s arrematou %s no leilão por R$ %d!" % [str(winner["name"]), tile_name, winning_bid])
+			_broadcast_toast_event("Leilão Arrematado!", "%s levou %s por R$ %d." % [str(winner["name"]), tile_name, winning_bid], "positive")
+			if board_view != null:
+				board_view.update_ownership(property_owners, mortgaged_tiles)
+				_broadcast_tile_pulse(tile_idx, board_view.get_player_color(winner_id), "LEILÃO R$%d" % winning_bid)
+		else:
+			_log_both("Leilão encerrado sem arremate válido para %s." % tile_name)
+	else:
+		_log_both("Leilão encerrado sem lances — %s permanece livre no Banco." % tile_name)
+
+	_sync_hud()
+	if hud != null:
+		hud.hide_auction_modal()
+	call_deferred("_maybe_start_bot_turn")
+
+func _maybe_step_auction_bot() -> void:
+	if not _is_auction_active() or _is_network_client():
+		return
+	var bidder_id: int = _get_auction_current_bidder_id()
+	if bidder_id < 0:
+		return
+	var bidder: Dictionary = _get_player_by_id(bidder_id)
+	if bidder.is_empty() or not bool(bidder.get("is_bot", false)):
+		return
+	var my_token: int = _auction_bot_token
+	_run_auction_bot_step(my_token, bidder_id)
+
+func _run_auction_bot_step(expected_token: int, bidder_id: int) -> void:
+	if not is_inside_tree():
+		return
+	await get_tree().create_timer(minf(0.45, _get_bot_action_delay())).timeout
+	if not is_inside_tree() or not _match_active or expected_token != _auction_bot_token or not _is_auction_active():
+		return
+	if _get_auction_current_bidder_id() != bidder_id:
+		return
+	var bidder: Dictionary = _get_player_by_id(bidder_id)
+	var tile_idx: int = int(_auction_state.get("tile_index", -1))
+	if bidder.is_empty() or tile_idx < 0 or tile_idx >= tiles.size():
+		pass_auction_turn(bidder_id)
+		return
+	var bid_val: int = bot_ai.choose_auction_bid(
+		bidder,
+		tiles[tile_idx],
+		tile_idx,
+		int(_auction_state.get("current_bid", 0)),
+		_get_auction_min_next_bid(),
+		_build_bot_board_state()
+	)
+	if bid_val >= _get_auction_min_next_bid() and bid_val <= int(bidder.get("money", 0)):
+		submit_auction_bid(bidder_id, bid_val)
+	else:
+		pass_auction_turn(bidder_id)
+
+func _sync_auction_ui_and_network() -> void:
+	if hud != null:
+		var local_pid: int = _get_local_player_id() if _is_online_match() else -1
+		hud.refresh_auction_modal(_auction_state, local_pid, _is_online_match())
+	_sync_hud()
 
 # --- Camada de Multiplayer P2P (ENet • Host Autoritativo) ---
 
@@ -2661,6 +3095,7 @@ func _build_network_snapshot() -> Dictionary:
 		"last_tile_summary": _last_tile_summary,
 		"is_animating": _is_animating,
 		"is_market_push": is_market_push_round(),
+		"auction_state": _auction_state.duplicate(true),
 		"victory_info": victory_out
 	}
 
@@ -2709,6 +3144,11 @@ func _apply_network_snapshot(snapshot: Dictionary, is_initial_start: bool) -> vo
 	_is_animating = bool(snapshot.get("is_animating", false))
 	_is_bot_thinking = false
 	_match_active = true
+	var raw_auction: Variant = snapshot.get("auction_state", {})
+	if raw_auction is Dictionary:
+		_auction_state = (raw_auction as Dictionary).duplicate(true)
+	else:
+		_auction_state.clear()
 
 	if board_view != null:
 		if is_initial_start:
@@ -2719,6 +3159,11 @@ func _apply_network_snapshot(snapshot: Dictionary, is_initial_start: bool) -> vo
 		_sync_board_visuals()
 
 	_sync_hud()
+	if hud != null:
+		if _is_auction_active():
+			hud.refresh_auction_modal(_auction_state, _get_local_player_id(), _is_online_match())
+		else:
+			hud.hide_auction_modal()
 
 	var raw_victory: Variant = snapshot.get("victory_info", {})
 	if current_state == TurnState.GAME_OVER and raw_victory is Dictionary and not (raw_victory as Dictionary).is_empty() and hud != null:
@@ -2779,6 +3224,12 @@ func _on_network_remote_event_received(session_id: int, event_type: String, payl
 					"manual_close": false,
 					"duration_sec": minf(auto_sec, 4.5)
 				})
+		"TRADE_OFFER":
+			if hud != null:
+				hud.show_trade_confirm_modal(payload.duplicate(true))
+		"TRADE_OFFER_CLOSED":
+			if hud != null:
+				hud.hide_trade_confirm_modal()
 		"RETURN_TO_LOBBY":
 			_match_active = false
 			_is_animating = false
@@ -2799,7 +3250,29 @@ func _on_network_client_action(sender_peer_id: int, session_id: int, action_name
 		return
 	if session_id != _active_net_session_id:
 		return
-	if _is_animating or _is_bot_thinking or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+
+	if action_name == "TRADE_RESPOND":
+		if _pending_trade_offer.is_empty():
+			return
+		if int(_pending_trade_offer.get("target_peer_id", -1)) != sender_peer_id:
+			return
+		respond_to_trade_offer(int(params.get("offer_id", -1)), bool(params.get("accept", false)))
+		return
+
+	if action_name == "AUCTION_BID" or action_name == "AUCTION_PASS":
+		if not _is_auction_active():
+			return
+		var bidder_id: int = _get_auction_current_bidder_id()
+		var bidder_p: Dictionary = _get_player_by_id(bidder_id)
+		if bidder_p.is_empty() or bool(bidder_p.get("is_bot", false)) or int(bidder_p.get("peer_id", 1)) != sender_peer_id:
+			return
+		if action_name == "AUCTION_BID":
+			submit_auction_bid(bidder_id, int(params.get("amount", 0)))
+		else:
+			pass_auction_turn(bidder_id)
+		return
+
+	if _is_animating or _is_bot_thinking or _is_auction_active() or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
 		return
 	if players.is_empty() or current_player_index < 0 or current_player_index >= players.size():
 		return
@@ -2827,7 +3300,7 @@ func _on_network_client_action(sender_peer_id: int, session_id: int, action_name
 		"MORTGAGE":
 			toggle_mortgage(int(params.get("tile_index", -1)))
 		"TRADE":
-			execute_trade(
+			propose_trade(
 				int(params.get("target_id", -1)),
 				int(params.get("offer_tile", -1)),
 				int(params.get("request_tile", -1)),

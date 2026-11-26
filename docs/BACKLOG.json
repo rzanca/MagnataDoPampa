@@ -41,14 +41,14 @@
       "id": "LOTE-02",
       "title": "Sistema de Negociação Seguro (confirmação obrigatória) e Leilões Periódicos",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Exigir aceite explícito do alvo (Local, BotAI, Rede P2P), permitir iniciar troca clicando no lote e implementar Leilão periódico a cada 3 ou 4 rodadas."
     },
     {
       "id": "LOTE-03",
       "title": "Construção estilo Carrinho de Compras, rótulo dinâmico de aluguel e animação casa-a-casa",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Painel carrinho por monopólio, substituição do preço pelo aluguel em tempo real no tabuleiro, cores distintas Verde/Azul e salto casa por casa."
     },
     {
