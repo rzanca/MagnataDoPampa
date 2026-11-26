@@ -17,7 +17,8 @@ param(
     [switch]$DebugBuild,
     [switch]$CopyToMdp,
     [switch]$SkipValidation,
-    [switch]$PublishGitHubRelease
+    [switch]$PublishGitHubRelease,
+    [switch]$SkipGitHubRelease
 )
 
 $ErrorActionPreference = "Stop"
@@ -87,6 +88,23 @@ function Find-GodotExecutable {
         }
     }
     throw "Executavel do Godot 4.7 nao encontrado."
+}
+
+function Find-GhExecutable {
+    $candidates = @()
+    $cmd = Get-Command gh -ErrorAction SilentlyContinue
+    if ($cmd) { $candidates += $cmd.Source }
+    $candidates += @(
+        (Join-Path $env:ProgramFiles "GitHub CLI\gh.exe"),
+        (Join-Path ${env:ProgramFiles(x86)} "GitHub CLI\gh.exe"),
+        (Join-Path $env:LOCALAPPDATA "Programs\GitHub CLI\gh.exe")
+    )
+    foreach ($c in ($candidates | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $c) {
+            return (Resolve-Path -LiteralPath $c).Path
+        }
+    }
+    return $null
 }
 
 function Find-AndroidEnvironment {
@@ -480,11 +498,18 @@ if ($CopyToMdp) {
     Write-Ok "Arquivos copiados para $MdpDir"
 }
 
-if ($PublishGitHubRelease) {
+$ShouldPublishRelease = $true
+if ($SkipGitHubRelease) {
+    $ShouldPublishRelease = $false
+} elseif ($PublishGitHubRelease) {
+    $ShouldPublishRelease = $true
+}
+
+if ($ShouldPublishRelease) {
     Write-Step "Publicando Release v$($VerObj.version) no GitHub Releases"
-    $ghCmd = Get-Command gh -ErrorAction SilentlyContinue
-    if (-not $ghCmd) {
-        throw "GitHub CLI (gh) nao encontrado no PATH para -PublishGitHubRelease."
+    $ghExe = Find-GhExecutable
+    if (-not $ghExe) {
+        throw "GitHub CLI (gh) nao encontrado no PATH nem em Program Files. Use -SkipGitHubRelease para pular o upload."
     }
     $AssetsToUpload = New-Object System.Collections.Generic.List[string]
     $AssetsToUpload.Add($ManifestReleasePath)
@@ -495,12 +520,30 @@ if ($PublishGitHubRelease) {
     if (-not [string]::IsNullOrWhiteSpace($VerObj.github_repo)) {
         $repoFlag = @("--repo", $VerObj.github_repo)
     }
-    $notesText = if ([string]::IsNullOrWhiteSpace($VerObj.release_notes)) { "Release v$($VerObj.version) (build $($VerObj.build_number))" } else { $VerObj.release_notes }
-    & $ghCmd.Source release create ("v" + $VerObj.version) @AssetsToUpload @repoFlag --title "Magnata do Pampa v$($VerObj.version)" --notes $notesText
-    if ($LASTEXITCODE -ne 0) {
-        throw "Falha ao publicar release no GitHub (codigo $LASTEXITCODE)."
+    $tagName = "v" + $VerObj.version
+    $releaseTitle = "Magnata do Pampa $tagName"
+    $notesText = if ([string]::IsNullOrWhiteSpace($VerObj.release_notes)) { "Release $tagName (build $($VerObj.build_number))" } else { $VerObj.release_notes }
+
+    & $ghExe release view $tagName @repoFlag *> $null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Info "Release $tagName ja existe no GitHub; atualizando assets (--clobber)..."
+        & $ghExe release upload $tagName @AssetsToUpload @repoFlag --clobber
+        if ($LASTEXITCODE -ne 0) {
+            throw "Falha ao atualizar assets da release $tagName no GitHub (codigo $LASTEXITCODE)."
+        }
+        & $ghExe release edit $tagName @repoFlag --title $releaseTitle --notes $notesText
+        if ($LASTEXITCODE -ne 0) {
+            throw "Falha ao atualizar metadados da release $tagName no GitHub (codigo $LASTEXITCODE)."
+        }
+    } else {
+        & $ghExe release create $tagName @AssetsToUpload @repoFlag --target main --title $releaseTitle --notes $notesText
+        if ($LASTEXITCODE -ne 0) {
+            throw "Falha ao publicar release $tagName no GitHub (codigo $LASTEXITCODE)."
+        }
     }
-    Write-Ok "Release v$($VerObj.version) publicada no GitHub!"
+    Write-Ok "Release $tagName publicada no GitHub!"
+} else {
+    Write-Info "Publicacao no GitHub Releases ignorada (-SkipGitHubRelease)."
 }
 
 Write-Step "Resumo da Automacao de Build"

@@ -17,7 +17,8 @@ param(
     [switch]$DebugBuild,
     [switch]$CopyToMdp,
     [switch]$SkipValidation,
-    [switch]$PublishGitHubRelease
+    [switch]$PublishGitHubRelease,
+    [switch]$SkipGitHubRelease
 )
 
 $TargetScript = Join-Path $PSScriptRoot "export_builds.ps1"
