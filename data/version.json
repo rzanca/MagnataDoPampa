@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
     "version":  "0.9.0",
-    "build_number":  10,
+    "build_number":  11,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
     "release_notes":  "Evolucao completa: moeda PILA (P$), Estacoes do Pampa, Estancia Dinamica, cartas sazonais, audio gaucho multi-harmonico, camera pan/zoom + popups arrastaveis, novo branding em 40 lotes/cartas e modelos 3D .glb do Blender.",
-    "built_at":  "2026-11-26T17:01:02Z",
-    "git_commit":  "734c57e"
+    "built_at":  "2026-11-26T17:52:12Z",
+    "git_commit":  "8a4d2fe"
 }

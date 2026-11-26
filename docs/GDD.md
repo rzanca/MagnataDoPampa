@@ -42,3 +42,11 @@
 - **Áudio Temático Gaúcho (`SoundManager`):** síntese procedural multi-harmônica inspirada em acordeon/fandango, violão pampeano dedilhado, trote de casco, dados na madeira, tilintar de Pilas e martelo de remate.
 - **Exploração & UX Livre:** câmera com pan/arraste e zoom suave (`scroll` / pinça / atalhos), foco dinâmico bem próximo ao peão durante a caminhada, e todos os popups/modais do HUD arrastáveis pela barra de título.
 - **Identidade 3D & Artes de Marca:** centro do tabuleiro com brasão oficial, `40` artes de lotes renovadas sob o novo branding, fundo exclusivo para as cartas de Sorte ou Azar e modelos `.glb` gerados via Blender headless (6 peões, construções campeiras, dados chanfrados e enfeites temáticos nos lotes).
+
+## 6. Ambientação 3D Externa, Modo de Times & Profundidade Sazonal (v0.10.0)
+- **Ambientação Externa na Vista 3D:** cenário campeiro de salão/galpão ao redor do tabuleiro na Vista 3D Isométrica (mesa rústica ampliada com pranchas, lampiões/braseiros quentes, conjunto de chimarrão, baú de escrituras e horizonte das coxilhas do Pampa), ocultado automaticamente na Vista 2D de conferência para manter leitura tática limpa.
+- **Efeitos Visuais Sazonais no Tabuleiro 3D:** variação sutil de luz direcional, ambiente/céu e tonalidade do feltro conforme a estação ativa (*Primavera*, *Verão*, *Outono*, *Inverno*).
+- **Modo de Times (`FFA`, `2x2` e `3x3`):** opção de partida todos contra todos (`FFA`), `2x2` (4 estanceiros) e `3x3` (6 estanceiros) com facções temáticas gaúchas (**Maragatos** vs **Chimangos**, **Estância Verde vs Ouro**, **Fronteira vs Serra**). Cada jogador move seu próprio peão, enquanto **caixa e escrituras/monopólios são compartilhados pela equipe** (aluguel zero entre aliados e falência/vitória por equipe).
+- **Contratos de Parceria / Arrendamento Temporário:** em negociações entre adversários, opção de incluir pacto de isenção mútua de aluguel por `3` rodadas.
+- **Missões Secretas & Conquistas:** objetivos secretos individuais na *Estância Dinâmica* (bônus único de `+600 Pilas`) e sistema persistente de **6 Troféus de Carreira** salvos em `user://achievements.cfg`.
+- **Trilha Ambiente Dinâmica por Estação:** leito sonoro contínuo opcional gerado por `SoundManager` conforme a estação ativa, com controle liga/desliga e volume dedicados em *Ajustes*.

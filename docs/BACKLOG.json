@@ -148,6 +148,48 @@
       "owner_agent": "04_qa_devops.md",
       "status": "done",
       "notes": "Validar todos os scripts, mobile smoke, auditoria estática, incrementar versão e gerar pacote final Windows+Launcher e Android APK."
+    },
+    {
+      "id": "LOTE-18",
+      "title": "Ambientação externa ao tabuleiro na Vista 3D + efeitos visuais sazonais",
+      "owner_agent": "01_arquiteto_hibrido.md",
+      "status": "done",
+      "notes": "Criar cenário de galpão/mesa campeira e paisagem externa visível apenas na Vista 3D Isométrica, além de iluminação e feltro sazonais reativos às estações."
+    },
+    {
+      "id": "LOTE-19",
+      "title": "Modo de Times (FFA, 2x2 e 3x3) com caixa e escrituras compartilhadas (Maragatos vs Chimangos)",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "in_progress",
+      "notes": "Suporte completo a equipes 2x2 e 3x3 no SetupScreen, GameManager, BotAI, GameHUD e multiplayer snapshot com movimentos individuais e economia compartilhada."
+    },
+    {
+      "id": "LOTE-20",
+      "title": "Contratos de Parceria / Arrendamento Temporário (isenção de aluguel por 3 rodadas em trocas)",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "pending",
+      "notes": "Adicionar pacto opcional de isenção mútua de aluguel por 3 rodadas nas trocas de GameManager, BotAI e GameHUD."
+    },
+    {
+      "id": "LOTE-21",
+      "title": "Missões Secretas na Estância Dinâmica + Troféus de Carreira persistentes",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "pending",
+      "notes": "Objetivos ocultos com recompensa única (+600 Pilas) e conquistas persistidas em user://achievements.cfg com modal de Troféus."
+    },
+    {
+      "id": "LOTE-22",
+      "title": "Trilha Ambiente Dinâmica por Estação em SoundManager + controle em Ajustes",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "pending",
+      "notes": "Síntese de trilha ambiente em loop suave por estação em SoundManager.gd com toggle e volume próprios no GameHUD."
+    },
+    {
+      "id": "LOTE-23",
+      "title": "Integração final QA, auditoria estática e exportação v0.10.0",
+      "owner_agent": "04_qa_devops.md",
+      "status": "pending",
+      "notes": "Executar bateria completa headless desktop + mobile, validar zero erros e exportar Windows+Launcher e Android APK v0.10.0."
     }
   ]
 }

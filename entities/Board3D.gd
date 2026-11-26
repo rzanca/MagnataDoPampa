@@ -51,11 +51,19 @@ var _frame_panel: PanelContainer
 var _viewport_container: SubViewportContainer
 var _sub_viewport: SubViewport
 var _world_root: Node3D
+var _env_outer_root: Node3D
 var _camera: Camera3D
 var _board_root: Node3D
 var _tokens_root: Node3D
 var _center_root: Node3D
 var _fx_root: Node3D
+var _scene_env: Environment = null
+var _sun_light: DirectionalLight3D = null
+var _fill_light: DirectionalLight3D = null
+var _felt_mat: StandardMaterial3D = null
+var _lamp_glow_mats: Array[StandardMaterial3D] = []
+var _season_tween: Tween = null
+var _applied_season_id: String = "__init__"
 
 var _tiles_cache: Array[Dictionary] = []
 var _tile_bounds_xz: Array[Rect2] = []
@@ -188,6 +196,10 @@ func _build_viewport_shell() -> void:
 	_world_root.name = "WorldRoot"
 	_sub_viewport.add_child(_world_root)
 
+	_env_outer_root = Node3D.new()
+	_env_outer_root.name = "OuterGalpaoEnvironment"
+	_world_root.add_child(_env_outer_root)
+
 	_board_root = Node3D.new()
 	_board_root.name = "BoardTiles"
 	_world_root.add_child(_board_root)
@@ -206,28 +218,30 @@ func _build_viewport_shell() -> void:
 
 func _setup_scene_lighting_and_camera() -> void:
 	var env_node: WorldEnvironment = WorldEnvironment.new()
-	var env: Environment = Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color("#0D1510")
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color("#DCE6DF")
-	env.ambient_light_energy = 0.74
-	env_node.environment = env
+	_scene_env = Environment.new()
+	_scene_env.background_mode = Environment.BG_COLOR
+	_scene_env.background_color = Color("#0D1510")
+	_scene_env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	_scene_env.ambient_light_color = Color("#DCE6DF")
+	_scene_env.ambient_light_energy = 0.74
+	env_node.environment = _scene_env
 	_world_root.add_child(env_node)
 
-	var sun: DirectionalLight3D = DirectionalLight3D.new()
-	sun.light_energy = 1.05
-	sun.light_color = Color("#FFF7E6")
-	sun.shadow_enabled = true
-	sun.rotation_degrees = Vector3(-54.0, 34.0, 0.0)
-	_world_root.add_child(sun)
+	_sun_light = DirectionalLight3D.new()
+	_sun_light.light_energy = 1.05
+	_sun_light.light_color = Color("#FFF7E6")
+	_sun_light.shadow_enabled = true
+	_sun_light.rotation_degrees = Vector3(-54.0, 34.0, 0.0)
+	_world_root.add_child(_sun_light)
 
-	var fill_light: DirectionalLight3D = DirectionalLight3D.new()
-	fill_light.light_energy = 0.35
-	fill_light.light_color = Color("#B7E4C7")
-	fill_light.shadow_enabled = false
-	fill_light.rotation_degrees = Vector3(-35.0, -135.0, 0.0)
-	_world_root.add_child(fill_light)
+	_fill_light = DirectionalLight3D.new()
+	_fill_light.light_energy = 0.35
+	_fill_light.light_color = Color("#B7E4C7")
+	_fill_light.shadow_enabled = false
+	_fill_light.rotation_degrees = Vector3(-35.0, -135.0, 0.0)
+	_world_root.add_child(_fill_light)
+
+	_build_outer_3d_environment()
 
 	_camera = Camera3D.new()
 	_camera.projection = Camera3D.PROJECTION_ORTHOGONAL
@@ -236,6 +250,266 @@ func _setup_scene_lighting_and_camera() -> void:
 	_camera.current = true
 	_world_root.add_child(_camera)
 	_apply_camera_pose_immediate(false)
+
+func _build_outer_3d_environment() -> void:
+	if _env_outer_root == null:
+		return
+	for ch: Node in _env_outer_root.get_children():
+		ch.queue_free()
+	_lamp_glow_mats.clear()
+
+	# Chão do Pampa e pranchado de madeira campeira sob a mesa
+	var pasture_mat: StandardMaterial3D = _make_material(Color("#122419"), 0.92, 0.0)
+	var stone_mat: StandardMaterial3D = _make_material(Color("#363D38"), 0.80, 0.05)
+	var plank_a_mat: StandardMaterial3D = _make_material(Color("#3D281A"), 0.72, 0.04)
+	var plank_b_mat: StandardMaterial3D = _make_material(Color("#322014"), 0.74, 0.04)
+	var iron_mat: StandardMaterial3D = _make_material(Color("#1B2124"), 0.38, 0.65)
+	var brass_mat: StandardMaterial3D = _make_material(Color("#D4AF37"), 0.28, 0.78)
+	var ceramic_mat: StandardMaterial3D = _make_material(Color("#2E6F5E"), 0.36, 0.12)
+	var silver_mat: StandardMaterial3D = _make_material(Color("#D5DEE6"), 0.22, 0.85)
+	var leather_mat: StandardMaterial3D = _make_material(Color("#5C331D"), 0.58, 0.08)
+
+	var ground_mesh: MeshInstance3D = MeshInstance3D.new()
+	var ground_box: BoxMesh = BoxMesh.new()
+	ground_box.size = Vector3(54.0, 0.24, 54.0)
+	ground_mesh.mesh = ground_box
+	ground_mesh.position = Vector3(0.0, -0.78, 0.0)
+	ground_mesh.material_override = pasture_mat
+	_env_outer_root.add_child(ground_mesh)
+
+	# Coxilhas estilizadas no horizonte distante fora da mesa
+	var hill_mat: StandardMaterial3D = _make_material(Color("#183324"), 0.88, 0.0)
+	var hill_positions: Array[Vector3] = [
+		Vector3(-15.5, -0.65, -14.5),
+		Vector3(-4.0, -0.65, -17.5),
+		Vector3(10.5, -0.65, -16.0),
+		Vector3(-17.0, -0.65, 2.0),
+		Vector3(16.5, -0.65, -5.0)
+	]
+	for hp: Vector3 in hill_positions:
+		var h_cyl: CylinderMesh = CylinderMesh.new()
+		h_cyl.top_radius = 2.8
+		h_cyl.bottom_radius = 6.2
+		h_cyl.height = 1.65
+		h_cyl.radial_segments = 16
+		_add_mesh_part(_env_outer_root, h_cyl, hp, hill_mat, Vector3.ZERO, Vector3(1.4, 0.75, 1.1))
+
+	# Mesa rústica de galpão em tábuas alternadas ao redor do tabuleiro
+	var deck_rim: BoxMesh = BoxMesh.new()
+	deck_rim.size = Vector3(23.6, 0.20, 23.6)
+	_add_mesh_part(_env_outer_root, deck_rim, Vector3(0.0, -0.58, 0.0), stone_mat)
+
+	var plank_count: int = 10
+	var plank_span: float = 22.8
+	var plank_w: float = plank_span / float(plank_count)
+	for i: int in range(plank_count):
+		var px: float = -plank_span * 0.5 + plank_w * (float(i) + 0.5)
+		var plank_m: BoxMesh = BoxMesh.new()
+		plank_m.size = Vector3(plank_w - 0.07, 0.14, plank_span)
+		var p_mat: StandardMaterial3D = plank_a_mat if (i % 2 == 0) else plank_b_mat
+		_add_mesh_part(_env_outer_root, plank_m, Vector3(px, -0.44, 0.0), p_mat)
+
+	# Frisos laterais de vigas de madeira da mesa do galpão
+	for rail_z: float in [-11.55, 11.55]:
+		var beam_x: BoxMesh = BoxMesh.new()
+		beam_x.size = Vector3(23.6, 0.24, 0.45)
+		_add_mesh_part(_env_outer_root, beam_x, Vector3(0.0, -0.38, rail_z), plank_b_mat)
+	for rail_x: float in [-11.55, 11.55]:
+		var beam_z: BoxMesh = BoxMesh.new()
+		beam_z.size = Vector3(0.45, 0.24, 23.6)
+		_add_mesh_part(_env_outer_root, beam_z, Vector3(rail_x, -0.38, 0.0), plank_b_mat)
+
+	# 4 Lampiões coloniais nos cantos externos da mesa (fora da área clicável)
+	var lantern_corners: Array[Vector3] = [
+		Vector3(-9.35, -0.37, -9.35),
+		Vector3(9.35, -0.37, -9.35),
+		Vector3(-9.35, -0.37, 9.35),
+		Vector3(9.35, -0.37, 9.35)
+	]
+	for lc: Vector3 in lantern_corners:
+		var post_root: Node3D = Node3D.new()
+		post_root.position = lc
+		_env_outer_root.add_child(post_root)
+
+		var plinth_m: CylinderMesh = CylinderMesh.new()
+		plinth_m.top_radius = 0.26
+		plinth_m.bottom_radius = 0.34
+		plinth_m.height = 0.14
+		plinth_m.radial_segments = 12
+		_add_mesh_part(post_root, plinth_m, Vector3(0.0, 0.07, 0.0), stone_mat)
+
+		var pole_m: CylinderMesh = CylinderMesh.new()
+		pole_m.top_radius = 0.075
+		pole_m.bottom_radius = 0.095
+		pole_m.height = 0.95
+		pole_m.radial_segments = 10
+		_add_mesh_part(post_root, pole_m, Vector3(0.0, 0.56, 0.0), iron_mat)
+
+		var glow_mat: StandardMaterial3D = _make_vivid_material(Color("#FFCA68"), 0.20, 0.06, 0.92)
+		_lamp_glow_mats.append(glow_mat)
+		var lamp_core: CylinderMesh = CylinderMesh.new()
+		lamp_core.top_radius = 0.16
+		lamp_core.bottom_radius = 0.13
+		lamp_core.height = 0.26
+		lamp_core.radial_segments = 8
+		_add_mesh_part(post_root, lamp_core, Vector3(0.0, 1.15, 0.0), glow_mat)
+
+		var cap_cone: CylinderMesh = CylinderMesh.new()
+		cap_cone.top_radius = 0.03
+		cap_cone.bottom_radius = 0.24
+		cap_cone.height = 0.16
+		cap_cone.radial_segments = 8
+		_add_mesh_part(post_root, cap_cone, Vector3(0.0, 1.34, 0.0), iron_mat)
+
+	# Adereço 1: Bandeja de Mate & Garrafa Térmica na asa esquerda da mesa
+	var mate_tray: Node3D = Node3D.new()
+	mate_tray.position = Vector3(-9.45, -0.37, 2.35)
+	mate_tray.rotation_degrees = Vector3(0.0, 18.0, 0.0)
+	_env_outer_root.add_child(mate_tray)
+
+	var tray_board: BoxMesh = BoxMesh.new()
+	tray_board.size = Vector3(1.55, 0.08, 1.12)
+	_add_mesh_part(mate_tray, tray_board, Vector3(0.0, 0.04, 0.0), leather_mat)
+
+	var thermos_body: CylinderMesh = CylinderMesh.new()
+	thermos_body.top_radius = 0.22
+	thermos_body.bottom_radius = 0.24
+	thermos_body.height = 0.88
+	thermos_body.radial_segments = 20
+	_add_mesh_part(mate_tray, thermos_body, Vector3(-0.34, 0.48, -0.10), ceramic_mat)
+
+	var thermos_cap: CylinderMesh = CylinderMesh.new()
+	thermos_cap.top_radius = 0.18
+	thermos_cap.bottom_radius = 0.22
+	thermos_cap.height = 0.18
+	_add_mesh_part(mate_tray, thermos_cap, Vector3(-0.34, 1.00, -0.10), silver_mat)
+
+	var cuia_side: SphereMesh = SphereMesh.new()
+	cuia_side.radius = 0.17
+	cuia_side.height = 0.30
+	_add_mesh_part(mate_tray, cuia_side, Vector3(0.28, 0.22, 0.18), plank_a_mat)
+	var bomba_side: CylinderMesh = CylinderMesh.new()
+	bomba_side.top_radius = 0.018
+	bomba_side.bottom_radius = 0.018
+	bomba_side.height = 0.36
+	_add_mesh_part(mate_tray, bomba_side, Vector3(0.35, 0.40, 0.18), silver_mat, Vector3(0.0, 0.0, -24.0))
+
+	# Pilhas de moedas PILA decorativas fora do tabuleiro
+	var coin_mesh: CylinderMesh = CylinderMesh.new()
+	coin_mesh.top_radius = 0.14
+	coin_mesh.bottom_radius = 0.14
+	coin_mesh.height = 0.045
+	for c_h: int in range(4):
+		_add_mesh_part(mate_tray, coin_mesh, Vector3(0.42, 0.10 + float(c_h) * 0.048, -0.26), brass_mat)
+
+	# Adereço 2: Baú de Escrituras & Ouro na asa direita da mesa
+	var chest_node: Node3D = Node3D.new()
+	chest_node.position = Vector3(9.45, -0.37, -3.40)
+	chest_node.rotation_degrees = Vector3(0.0, -22.0, 0.0)
+	_env_outer_root.add_child(chest_node)
+
+	var chest_box: BoxMesh = BoxMesh.new()
+	chest_box.size = Vector3(1.22, 0.56, 0.86)
+	_add_mesh_part(chest_node, chest_box, Vector3(0.0, 0.28, 0.0), leather_mat)
+	var chest_lid: CylinderMesh = CylinderMesh.new()
+	chest_lid.top_radius = 0.43
+	chest_lid.bottom_radius = 0.43
+	chest_lid.height = 1.22
+	chest_lid.radial_segments = 14
+	_add_mesh_part(chest_node, chest_lid, Vector3(0.0, 0.56, 0.0), plank_a_mat, Vector3(0.0, 0.0, 90.0))
+	var chest_lock: BoxMesh = BoxMesh.new()
+	chest_lock.size = Vector3(0.18, 0.20, 0.08)
+	_add_mesh_part(chest_node, chest_lock, Vector3(0.0, 0.50, 0.44), brass_mat)
+
+func apply_season_visuals(season_id: String, animate: bool = true) -> void:
+	if season_id == _applied_season_id:
+		return
+	_applied_season_id = season_id
+
+	var target_sun_col: Color = Color("#FFF7E6")
+	var target_sun_energy: float = 1.05
+	var target_fill_col: Color = Color("#B7E4C7")
+	var target_ambient_col: Color = Color("#DCE6DF")
+	var target_ambient_energy: float = 0.74
+	var target_bg_col: Color = Color("#0D1510")
+	var target_felt_col: Color = Color("#152A1E")
+	var target_lamp_energy: float = 0.92
+
+	match season_id:
+		"PRIMAVERA":
+			target_sun_col = Color("#FFF9EA")
+			target_sun_energy = 1.08
+			target_fill_col = Color("#A8F0C6")
+			target_ambient_col = Color("#DCF2E4")
+			target_ambient_energy = 0.78
+			target_bg_col = Color("#0D1812")
+			target_felt_col = Color("#163222")
+			target_lamp_energy = 0.85
+		"VERAO":
+			target_sun_col = Color("#FFE6AD")
+			target_sun_energy = 1.18
+			target_fill_col = Color("#F5D88C")
+			target_ambient_col = Color("#EDE6CF")
+			target_ambient_energy = 0.82
+			target_bg_col = Color("#12170E")
+			target_felt_col = Color("#1B331C")
+			target_lamp_energy = 0.80
+		"OUTONO":
+			target_sun_col = Color("#FFC68A")
+			target_sun_energy = 1.02
+			target_fill_col = Color("#E89B6C")
+			target_ambient_col = Color("#E2D4C5")
+			target_ambient_energy = 0.72
+			target_bg_col = Color("#15120D")
+			target_felt_col = Color("#212B19")
+			target_lamp_energy = 1.15
+		"INVERNO":
+			target_sun_col = Color("#D6EBFF")
+			target_sun_energy = 0.94
+			target_fill_col = Color("#8EC5EA")
+			target_ambient_col = Color("#C2D8EB")
+			target_ambient_energy = 0.68
+			target_bg_col = Color("#0B1319")
+			target_felt_col = Color("#12262A")
+			target_lamp_energy = 1.38
+
+	if _season_tween != null and _season_tween.is_valid():
+		_season_tween.kill()
+	if not animate or not is_inside_tree():
+		if _sun_light != null:
+			_sun_light.light_color = target_sun_col
+			_sun_light.light_energy = target_sun_energy
+		if _fill_light != null:
+			_fill_light.light_color = target_fill_col
+		if _scene_env != null:
+			_scene_env.ambient_light_color = target_ambient_col
+			_scene_env.ambient_light_energy = target_ambient_energy
+			_scene_env.background_color = target_bg_col
+		if _felt_mat != null:
+			_felt_mat.albedo_color = target_felt_col
+		for lm: StandardMaterial3D in _lamp_glow_mats:
+			if lm != null:
+				lm.emission_energy_multiplier = target_lamp_energy
+		return
+
+	_season_tween = create_tween()
+	_season_tween.set_parallel(true)
+	_season_tween.set_trans(Tween.TRANS_SINE)
+	_season_tween.set_ease(Tween.EASE_IN_OUT)
+	if _sun_light != null:
+		_season_tween.tween_property(_sun_light, "light_color", target_sun_col, 0.75)
+		_season_tween.tween_property(_sun_light, "light_energy", target_sun_energy, 0.75)
+	if _fill_light != null:
+		_season_tween.tween_property(_fill_light, "light_color", target_fill_col, 0.75)
+	if _scene_env != null:
+		_season_tween.tween_property(_scene_env, "ambient_light_color", target_ambient_col, 0.75)
+		_season_tween.tween_property(_scene_env, "ambient_light_energy", target_ambient_energy, 0.75)
+		_season_tween.tween_property(_scene_env, "background_color", target_bg_col, 0.75)
+	if _felt_mat != null:
+		_season_tween.tween_property(_felt_mat, "albedo_color", target_felt_col, 0.75)
+	for lm: StandardMaterial3D in _lamp_glow_mats:
+		if lm != null:
+			_season_tween.tween_property(lm, "emission_energy_multiplier", target_lamp_energy, 0.75)
 
 func _get_iso_quaternion() -> Quaternion:
 	var t: Transform3D = Transform3D(Basis.IDENTITY, ISO_CAM_POS).looking_at(ISO_CAM_TARGET, Vector3.UP)
@@ -324,6 +598,8 @@ func _get_camera_base_pos(to_2d: bool) -> Vector3:
 
 func _apply_camera_pose_immediate(to_2d: bool) -> void:
 	_is_2d_view = to_2d
+	if _env_outer_root != null:
+		_env_outer_root.visible = not to_2d
 	if _camera == null:
 		return
 	if to_2d:
@@ -458,6 +734,8 @@ func _schedule_camera_overview_return(delay_sec: float = 0.55) -> void:
 
 func set_camera_2d_mode(to_2d: bool, animate: bool = true) -> void:
 	_is_2d_view = to_2d
+	if _env_outer_root != null:
+		_env_outer_root.visible = not to_2d
 	if _camera == null:
 		return
 	_kill_camera_tweens()
@@ -635,8 +913,12 @@ func build_board(tiles: Array[Dictionary]) -> void:
 	felt_box.size = Vector3(center_span - 0.16, 0.14, center_span - 0.16)
 	felt_mesh.mesh = felt_box
 	felt_mesh.position = Vector3(0.0, 0.0, 0.0)
-	felt_mesh.material_override = _make_material(Color("#152A1E"), 0.85, 0.0)
+	_felt_mat = _make_material(Color("#152A1E"), 0.85, 0.0)
+	felt_mesh.material_override = _felt_mat
 	_board_root.add_child(felt_mesh)
+	var cur_s: String = _applied_season_id
+	_applied_season_id = "__reapply__"
+	apply_season_visuals("" if cur_s == "__init__" else cur_s, false)
 
 	# Moldura dourada elegante contornando o centro reduzido
 	_add_gold_center_frame(center_span - 0.50)

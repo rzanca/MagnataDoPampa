@@ -1764,6 +1764,8 @@ func _sync_hud() -> void:
 	if hud == null:
 		return
 	hud.set_round_info(current_round, is_market_push_round(), get_current_season_info())
+	if board_view != null:
+		board_view.apply_season_visuals(get_current_season_id(), true)
 	var online_now: bool = _is_online_match()
 	var local_pid: int = _get_local_player_id()
 	var local_peer: int = network.get_local_peer_id() if online_now else 1
