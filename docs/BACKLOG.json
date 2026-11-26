@@ -13,7 +13,7 @@
       "id": "TASK-02",
       "title": "Mapear sinais de GameManager.gd, BoardView.gd e GameHUD.gd em docs/ARCHITECTURE.md",
       "owner_agent": "01_arquiteto_hibrido.md",
-      "status": "pending",
+      "status": "done",
       "notes": "Documentar interfaces e eventos existentes sem alterar regras do Modo Clássico."
     },
     {
