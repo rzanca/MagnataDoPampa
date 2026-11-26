@@ -135,6 +135,8 @@ var _preferences: Dictionary = {
 	"audio_enabled": true,
 	"audio_volume": 0.75,
 	"audio_step_sfx": true,
+	"ambient_enabled": true,
+	"ambient_volume": 0.35,
 	"player_chance_overrides": {}
 }
 
@@ -472,6 +474,8 @@ func _load_preferences() -> void:
 	_preferences["audio_enabled"] = bool(cfg.get_value("audio", "audio_enabled", true))
 	_preferences["audio_volume"] = clampf(float(cfg.get_value("audio", "audio_volume", 0.75)), 0.0, 1.0)
 	_preferences["audio_step_sfx"] = bool(cfg.get_value("audio", "audio_step_sfx", true))
+	_preferences["ambient_enabled"] = bool(cfg.get_value("audio", "ambient_enabled", true))
+	_preferences["ambient_volume"] = clampf(float(cfg.get_value("audio", "ambient_volume", 0.35)), 0.0, 1.0)
 
 func _save_preferences() -> void:
 	var cfg: ConfigFile = ConfigFile.new()
@@ -485,6 +489,8 @@ func _save_preferences() -> void:
 	cfg.set_value("audio", "audio_enabled", bool(_preferences.get("audio_enabled", true)))
 	cfg.set_value("audio", "audio_volume", clampf(float(_preferences.get("audio_volume", 0.75)), 0.0, 1.0))
 	cfg.set_value("audio", "audio_step_sfx", bool(_preferences.get("audio_step_sfx", true)))
+	cfg.set_value("audio", "ambient_enabled", bool(_preferences.get("ambient_enabled", true)))
+	cfg.set_value("audio", "ambient_volume", clampf(float(_preferences.get("ambient_volume", 0.35)), 0.0, 1.0))
 	var _save_err: Error = cfg.save(PREFS_FILE_PATH)
 
 func _on_settings_updated(new_prefs: Dictionary) -> void:
@@ -612,6 +618,8 @@ func _reset_match_state() -> void:
 	_reset_chance_deck()
 	if board_view != null:
 		board_view.reset_board_state()
+	if sound_manager != null:
+		sound_manager.stop_ambient()
 	if hud != null:
 		hud.reset_hud_state()
 		hud.set_match_ui_visible(false)
@@ -960,6 +968,8 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	if _seasons_enabled:
 		var s_info: Dictionary = get_current_season_info()
 		_log_both("Estação inicial: %s — %s" % [str(s_info.get("label", "")), str(s_info.get("effect_desc", ""))])
+	if sound_manager != null:
+		sound_manager.set_ambient_season(get_current_season_id())
 	_log_both("=== Rodada 1 iniciada ===")
 	if not players.is_empty():
 		_log_both("Vez de %s, tchê!" % str(players[0]["name"]))
@@ -2073,6 +2083,8 @@ func _advance_round_if_complete(finished_player_id: int) -> void:
 			_current_season_index = next_s
 			var s_info: Dictionary = get_current_season_info()
 			_play_sfx("season_change")
+			if sound_manager != null:
+				sound_manager.set_ambient_season(get_current_season_id())
 			_log_both("Mudança de Estação! Chegou %s: %s" % [str(s_info.get("label", "")), str(s_info.get("effect_desc", ""))])
 			_broadcast_toast_event("Estação: %s!" % str(s_info.get("label", "")), str(s_info.get("effect_desc", "")), "chance")
 	var auction_interval: int = int(_preferences.get("auction_interval_rounds", 3))
@@ -4495,6 +4507,8 @@ func _apply_network_snapshot(snapshot: Dictionary, is_initial_start: bool) -> vo
 		_sync_board_visuals()
 
 	_sync_hud()
+	if sound_manager != null:
+		sound_manager.set_ambient_season(get_current_season_id())
 	if hud != null:
 		if _is_auction_active():
 			hud.refresh_auction_modal(_auction_state, _get_local_player_id(), _is_online_match())

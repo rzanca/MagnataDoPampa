@@ -7,10 +7,15 @@ const SUBTLE_EVENTS: Array[String] = ["hop", "ui"]
 var _players: Array[AudioStreamPlayer] = []
 var _next_player_idx: int = 0
 var _stream_cache: Dictionary[String, AudioStreamWAV] = {}
+var _ambient_player: AudioStreamPlayer = null
+var _ambient_cache: Dictionary[String, AudioStreamWAV] = {}
+var _current_ambient_season: String = ""
 
 var _audio_enabled: bool = true
 var _audio_volume: float = 0.75
 var _step_sfx_enabled: bool = true
+var _ambient_enabled: bool = true
+var _ambient_volume: float = 0.35
 
 func _ready() -> void:
 	for i: int in range(POOL_SIZE):
@@ -18,13 +23,19 @@ func _ready() -> void:
 		player.name = "SfxVoice%d" % i
 		add_child(player)
 		_players.append(player)
+	_ambient_player = AudioStreamPlayer.new()
+	_ambient_player.name = "AmbientBedPlayer"
+	add_child(_ambient_player)
 	_apply_volume_to_players()
 
 func apply_preferences(prefs: Dictionary) -> void:
 	_audio_enabled = bool(prefs.get("audio_enabled", true))
 	_audio_volume = clampf(float(prefs.get("audio_volume", 0.75)), 0.0, 1.0)
 	_step_sfx_enabled = bool(prefs.get("audio_step_sfx", true))
+	_ambient_enabled = bool(prefs.get("ambient_enabled", true))
+	_ambient_volume = clampf(float(prefs.get("ambient_volume", 0.35)), 0.0, 1.0)
 	_apply_volume_to_players()
+	_sync_ambient_playback()
 
 func is_audio_enabled() -> bool:
 	return _audio_enabled
@@ -35,6 +46,15 @@ func get_audio_volume() -> float:
 func is_step_sfx_enabled() -> bool:
 	return _step_sfx_enabled
 
+func is_ambient_enabled() -> bool:
+	return _ambient_enabled
+
+func get_ambient_volume() -> float:
+	return _ambient_volume
+
+func get_current_ambient_season() -> String:
+	return _current_ambient_season
+
 func _apply_volume_to_players() -> void:
 	var db: float = -80.0
 	if _audio_enabled and _audio_volume > 0.01:
@@ -42,6 +62,52 @@ func _apply_volume_to_players() -> void:
 	for p: AudioStreamPlayer in _players:
 		if p != null and is_instance_valid(p):
 			p.volume_db = db
+	if _ambient_player != null and is_instance_valid(_ambient_player):
+		var amb_db: float = -80.0
+		if _audio_enabled and _ambient_enabled and _audio_volume > 0.01 and _ambient_volume > 0.01:
+			amb_db = linear_to_db(_audio_volume * _ambient_volume * 0.28)
+		_ambient_player.volume_db = amb_db
+
+func set_ambient_season(season_id: String) -> void:
+	var norm_season: String = season_id.strip_edges().to_upper()
+	if norm_season == "":
+		norm_season = "PRIMAVERA"
+	if _current_ambient_season == norm_season and _ambient_player != null and _ambient_player.playing:
+		return
+	_current_ambient_season = norm_season
+	_sync_ambient_playback()
+
+func stop_ambient() -> void:
+	_current_ambient_season = ""
+	if _ambient_player != null and is_instance_valid(_ambient_player):
+		_ambient_player.stop()
+
+func _sync_ambient_playback() -> void:
+	if _ambient_player == null or not is_instance_valid(_ambient_player):
+		return
+	if not _audio_enabled or not _ambient_enabled or _audio_volume <= 0.01 or _ambient_volume <= 0.01 or _current_ambient_season == "":
+		if _ambient_player.playing:
+			_ambient_player.stop()
+		return
+	if DisplayServer.get_name() == "headless" or AudioServer.get_driver_name() == "Dummy":
+		return
+	var stream: AudioStreamWAV = get_or_create_ambient_stream(_current_ambient_season)
+	if stream == null:
+		return
+	if _ambient_player.stream != stream or not _ambient_player.playing:
+		_ambient_player.stream = stream
+		_ambient_player.play()
+
+func get_or_create_ambient_stream(season_id: String) -> AudioStreamWAV:
+	var key: String = season_id.strip_edges().to_upper()
+	if key == "":
+		key = "PRIMAVERA"
+	if _ambient_cache.has(key):
+		return _ambient_cache[key]
+	var wav: AudioStreamWAV = _build_ambient_wav(key)
+	if wav != null:
+		_ambient_cache[key] = wav
+	return wav
 
 func play_sfx(event_name: String) -> void:
 	if not _audio_enabled or _audio_volume <= 0.01:
@@ -277,5 +343,76 @@ func _concat_tones(segments: Array[Dictionary]) -> AudioStreamWAV:
 	wav.format = AudioStreamWAV.FORMAT_16_BITS
 	wav.mix_rate = SAMPLE_RATE
 	wav.stereo = false
+	wav.data = pcm
+	return wav
+
+func _build_ambient_wav(season_id: String) -> AudioStreamWAV:
+	var dur: float = 4.0
+	var count: int = roundi(dur * float(SAMPLE_RATE))
+	var f_root: float = 196.0
+	var f_fifth: float = 294.0
+	var f_color: float = 247.0
+	var wind_mix: float = 0.08
+	var pulse_hz: float = 0.5
+	match season_id:
+		"VERAO":
+			f_root = 147.0
+			f_fifth = 220.5
+			f_color = 294.0
+			wind_mix = 0.05
+			pulse_hz = 0.75
+		"OUTONO":
+			f_root = 110.0
+			f_fifth = 165.0
+			f_color = 261.5
+			wind_mix = 0.11
+			pulse_hz = 0.5
+		"INVERNO":
+			f_root = 82.5
+			f_fifth = 123.75
+			f_color = 196.0
+			wind_mix = 0.16
+			pulse_hz = 0.25
+		_:
+			f_root = 196.0
+			f_fifth = 294.0
+			f_color = 247.0
+			wind_mix = 0.07
+			pulse_hz = 0.5
+
+	# Quantizar frequencias para ciclos exatos em 4s (loop perfeitamente continuo sem clique)
+	var q_root: float = maxf(1.0, roundf(f_root * dur)) / dur
+	var q_fifth: float = maxf(1.0, roundf(f_fifth * dur)) / dur
+	var q_color: float = maxf(1.0, roundf(f_color * dur)) / dur
+
+	var pcm: PackedByteArray = PackedByteArray()
+	pcm.resize(count * 2)
+	var seed_val: int = 4242
+	var lp_wind: float = 0.0
+	for i: int in range(count):
+		var t_sec: float = float(i) / float(SAMPLE_RATE)
+		seed_val = (seed_val * 1103515245 + 12345) & 0x7fffffff
+		var white: float = (float(seed_val % 2000) / 1000.0) - 1.0
+		lp_wind = lp_wind * 0.96 + white * 0.04
+
+		var swell: float = 0.72 + 0.28 * sin(TAU * pulse_hz * t_sec)
+		var pad: float = (
+			sin(TAU * q_root * t_sec) * 0.44 +
+			sin(TAU * q_fifth * t_sec) * 0.30 +
+			sin(TAU * q_color * t_sec) * 0.18 * swell
+		)
+		var sample_val: float = clampf((pad * 0.22 + lp_wind * wind_mix * swell), -1.0, 1.0)
+		var int16: int = clampi(roundi(sample_val * 32767.0), -32767, 32767)
+		var byte_off: int = i * 2
+		pcm[byte_off] = int16 & 0xFF
+		pcm[byte_off + 1] = (int16 >> 8) & 0xFF
+
+	var wav: AudioStreamWAV = AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = SAMPLE_RATE
+	wav.stereo = false
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_begin = 0
+	wav.loop_end = count
 	wav.data = pcm
 	return wav

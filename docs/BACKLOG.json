@@ -181,14 +181,14 @@
       "id": "LOTE-22",
       "title": "Trilha Ambiente Dinâmica por Estação em SoundManager + controle em Ajustes",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Síntese de trilha ambiente em loop suave por estação em SoundManager.gd com toggle e volume próprios no GameHUD."
     },
     {
       "id": "LOTE-23",
       "title": "Integração final QA, auditoria estática e exportação v0.10.0",
       "owner_agent": "04_qa_devops.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Executar bateria completa headless desktop + mobile, validar zero erros e exportar Windows+Launcher e Android APK v0.10.0."
     }
   ]

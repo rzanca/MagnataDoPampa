@@ -271,6 +271,8 @@ var _settings_auction_btns: Dictionary[String, Button] = {}
 var _settings_audio_btns: Dictionary[String, Button] = {}
 var _settings_volume_btns: Dictionary[String, Button] = {}
 var _settings_step_sfx_btns: Dictionary[String, Button] = {}
+var _settings_ambient_btns: Dictionary[String, Button] = {}
+var _settings_ambient_vol_btns: Dictionary[String, Button] = {}
 var _settings_note_label: Label
 var _settings_card: PanelContainer
 var _settings_scroll: ScrollContainer
@@ -288,6 +290,8 @@ var _prefs_cache: Dictionary = {
 	"audio_enabled": true,
 	"audio_volume": 0.75,
 	"audio_step_sfx": true,
+	"ambient_enabled": true,
+	"ambient_volume": 0.35,
 	"player_chance_overrides": {}
 }
 
@@ -3751,6 +3755,55 @@ func _build_settings_modal() -> void:
 		step_row.add_child(st_btn)
 		_settings_step_sfx_btns[st_key] = st_btn
 
+	var amb_lbl: Label = Label.new()
+	amb_lbl.text = "Trilha Ambiente das Estações (Galpão / Vento):"
+	amb_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	amb_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s3_vb.add_child(amb_lbl)
+
+	var amb_row: HBoxContainer = HBoxContainer.new()
+	amb_row.add_theme_constant_override("separation", 8)
+	s3_vb.add_child(amb_row)
+	_settings_ambient_btns.clear()
+	var amb_specs: Array[Array] = [
+		["on", "Ambiente ON"],
+		["off", "Ambiente OFF"]
+	]
+	for spec: Array in amb_specs:
+		var am_key: String = str(spec[0])
+		var am_val: bool = (am_key == "on")
+		var am_btn: Button = Button.new()
+		am_btn.text = str(spec[1])
+		am_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		am_btn.pressed.connect(func() -> void: _set_global_pref("ambient_enabled", am_val))
+		amb_row.add_child(am_btn)
+		_settings_ambient_btns[am_key] = am_btn
+
+	var amb_vol_lbl: Label = Label.new()
+	amb_vol_lbl.text = "Volume do Ambiente:"
+	amb_vol_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	amb_vol_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s3_vb.add_child(amb_vol_lbl)
+
+	var amb_vol_row: HBoxContainer = HBoxContainer.new()
+	amb_vol_row.add_theme_constant_override("separation", 8)
+	s3_vb.add_child(amb_vol_row)
+	_settings_ambient_vol_btns.clear()
+	var amb_vol_specs: Array[Array] = [
+		["0.18", "Suave"],
+		["0.35", "Médio"],
+		["0.60", "Cheio"]
+	]
+	for spec: Array in amb_vol_specs:
+		var av_key: String = str(spec[0])
+		var av_val: float = float(av_key)
+		var av_btn: Button = Button.new()
+		av_btn.text = str(spec[1])
+		av_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		av_btn.pressed.connect(func() -> void: _set_global_pref("ambient_volume", av_val))
+		amb_vol_row.add_child(av_btn)
+		_settings_ambient_vol_btns[av_key] = av_btn
+
 	var btn_done: Button = Button.new()
 	btn_done.text = "Concluir" if _is_touch_mode else "Concluir [ESC]"
 	_apply_button_theme(btn_done, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), true, _bh(44.0), _fs(14.5), 14.0, true)
@@ -3950,6 +4003,18 @@ func _refresh_settings_ui() -> void:
 		var st_btn: Button = _settings_step_sfx_btns[st_key]
 		st_btn.disabled = not audio_on
 		_style_seg_btn(st_btn, (st_key == "on") == step_sfx_on)
+
+	var amb_on: bool = bool(_prefs_cache.get("ambient_enabled", true))
+	for am_key: String in _settings_ambient_btns.keys():
+		var am_btn: Button = _settings_ambient_btns[am_key]
+		am_btn.disabled = not audio_on
+		_style_seg_btn(am_btn, (am_key == "on") == amb_on)
+
+	var cur_amb_vol: float = float(_prefs_cache.get("ambient_volume", 0.35))
+	for av_key: String in _settings_ambient_vol_btns.keys():
+		var av_btn: Button = _settings_ambient_vol_btns[av_key]
+		av_btn.disabled = (not audio_on) or (not amb_on)
+		_style_seg_btn(av_btn, absf(float(av_key) - cur_amb_vol) < 0.08)
 
 # 8. Modal de Carteira / Escrituras do Estanceiro (Adversários ou Próprio Jogador)
 func _build_portfolio_modal() -> void:
