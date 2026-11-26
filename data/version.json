@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
-    "version":  "0.8.0",
-    "build_number":  9,
+    "version":  "0.9.0",
+    "build_number":  10,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
-    "release_notes":  "Modo Clássico completo com Carta do Lote unificada, evento 20 de Setembro, leilão próprio, áudio procedural e multiplayer P2P/Web.",
-    "built_at":  "2026-11-26T05:13:25Z",
-    "git_commit":  "708e07c"
+    "release_notes":  "Evolucao completa: moeda PILA (P$), Estacoes do Pampa, Estancia Dinamica, cartas sazonais, audio gaucho multi-harmonico, camera pan/zoom + popups arrastaveis, novo branding em 40 lotes/cartas e modelos 3D .glb do Blender.",
+    "built_at":  "2026-11-26T17:01:02Z",
+    "git_commit":  "734c57e"
 }
