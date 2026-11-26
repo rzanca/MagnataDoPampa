@@ -2383,7 +2383,8 @@ func _run_bot_turn(expected_token: int) -> void:
 					_get_mortgageable_tiles_for(bot_id),
 					tiles,
 					property_buildings,
-					property_owners
+					property_owners,
+					_build_player_teams_map()
 				)
 				var liq_action: String = str(liq.get("action", "NONE"))
 				var liq_tile: int = int(liq.get("tile_index", -1))
@@ -2409,7 +2410,8 @@ func _run_bot_turn(expected_token: int) -> void:
 					_get_unmortgageable_tiles_for(bot_id),
 					tiles,
 					interest_rate,
-					property_owners
+					property_owners,
+					_build_player_teams_map()
 				)
 				if unmortgage_tile >= 0:
 					_log_both(bot_ai.get_flavor_message("UNMORTGAGE", bot_name))
@@ -2809,8 +2811,15 @@ func roll_dice() -> void:
 			await move_player(player, total, true, total)
 			if session_token != _match_session_token or not _match_active:
 				return
-			if current_state != TurnState.EVALUATING and current_state != TurnState.GAME_OVER:
-				current_state = TurnState.MANAGEMENT
+			if current_state == TurnState.GAME_OVER:
+				_is_animating = false
+				return
+			if bool(player.get("bankrupt", false)):
+				_is_animating = false
+				_advance_turn_after_bankruptcy(int(player["id"]))
+				return
+			if current_state != TurnState.EVALUATING:
+				_finish_post_move_step(player)
 		else:
 			player["jail_turns"] = int(player.get("jail_turns", 0)) + 1
 			if int(player["jail_turns"]) >= 3:
@@ -3400,6 +3409,8 @@ func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, credito
 
 func _trigger_victory(winner_player: Dictionary, custom_summary: String = "", victory_reason: String = "") -> void:
 	current_state = TurnState.GAME_OVER
+	if sound_manager != null:
+		sound_manager.stop_ambient()
 	_play_sfx("victory")
 	_match_session_token += 1
 	_bot_turn_token += 1

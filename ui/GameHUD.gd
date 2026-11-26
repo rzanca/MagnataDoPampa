@@ -557,6 +557,7 @@ func _update_responsive_layout() -> void:
 		if _board_quick_bar != null:
 			_board_quick_bar.position = Vector2(pad + 8.0, pad + 8.0)
 			_board_quick_bar.custom_minimum_size = Vector2(0.0, 0.0)
+			_board_quick_bar.size = Vector2(minf(board_w - 16.0, 520.0), 0.0)
 	else:
 		var panel_w: float = float(_profile_adapter.call("compute_side_panel_width", vp_size.x)) if _profile_adapter != null else clampf(vp_size.x * 0.245, 430.0, 520.0)
 		var board_w: float = maxf(360.0, vp_size.x - pad * 2.0 - gap - panel_w)
@@ -718,8 +719,12 @@ func _build_ui() -> void:
 	_board_quick_bar.add_theme_stylebox_override("panel", qb_style)
 	_hud_root.add_child(_board_quick_bar)
 
-	var qb_row: HBoxContainer = HBoxContainer.new()
-	qb_row.add_theme_constant_override("separation", 6 if _is_touch_mode else 8)
+	var qb_row: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if _is_touch_mode:
+		qb_row.add_theme_constant_override("h_separation", 6)
+		qb_row.add_theme_constant_override("v_separation", 6)
+	else:
+		qb_row.add_theme_constant_override("separation", 8)
 	_board_quick_bar.add_child(qb_row)
 
 	var qb_h: float = _bh(34.0)

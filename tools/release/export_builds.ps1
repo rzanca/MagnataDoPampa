@@ -524,22 +524,29 @@ if ($ShouldPublishRelease) {
     $releaseTitle = "Magnata do Pampa $tagName"
     $notesText = if ([string]::IsNullOrWhiteSpace($VerObj.release_notes)) { "Release $tagName (build $($VerObj.build_number))" } else { $VerObj.release_notes }
 
-    & $ghExe release view $tagName @repoFlag *> $null
-    if ($LASTEXITCODE -eq 0) {
-        Write-Info "Release $tagName ja existe no GitHub; atualizando assets (--clobber)..."
-        & $ghExe release upload $tagName @AssetsToUpload @repoFlag --clobber
-        if ($LASTEXITCODE -ne 0) {
-            throw "Falha ao atualizar assets da release $tagName no GitHub (codigo $LASTEXITCODE)."
+    $prevEap = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = "Continue"
+        & $ghExe release view $tagName @repoFlag *> $null
+        $releaseExists = ($LASTEXITCODE -eq 0)
+        if ($releaseExists) {
+            Write-Info "Release $tagName ja existe no GitHub; atualizando assets (--clobber)..."
+            & $ghExe release upload $tagName @AssetsToUpload @repoFlag --clobber
+            if ($LASTEXITCODE -ne 0) {
+                throw "Falha ao atualizar assets da release $tagName no GitHub (codigo $LASTEXITCODE)."
+            }
+            & $ghExe release edit $tagName @repoFlag --title $releaseTitle --notes $notesText
+            if ($LASTEXITCODE -ne 0) {
+                throw "Falha ao atualizar metadados da release $tagName no GitHub (codigo $LASTEXITCODE)."
+            }
+        } else {
+            & $ghExe release create $tagName @AssetsToUpload @repoFlag --target main --title $releaseTitle --notes $notesText
+            if ($LASTEXITCODE -ne 0) {
+                throw "Falha ao publicar release $tagName no GitHub (codigo $LASTEXITCODE)."
+            }
         }
-        & $ghExe release edit $tagName @repoFlag --title $releaseTitle --notes $notesText
-        if ($LASTEXITCODE -ne 0) {
-            throw "Falha ao atualizar metadados da release $tagName no GitHub (codigo $LASTEXITCODE)."
-        }
-    } else {
-        & $ghExe release create $tagName @AssetsToUpload @repoFlag --target main --title $releaseTitle --notes $notesText
-        if ($LASTEXITCODE -ne 0) {
-            throw "Falha ao publicar release $tagName no GitHub (codigo $LASTEXITCODE)."
-        }
+    } finally {
+        $ErrorActionPreference = $prevEap
     }
     Write-Ok "Release $tagName publicada no GitHub!"
 } else {

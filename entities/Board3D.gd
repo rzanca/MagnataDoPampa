@@ -109,6 +109,9 @@ var _user_zoom_scale: float = 1.0
 var _user_pan_offset: Vector3 = Vector3.ZERO
 var _is_panning_camera: bool = false
 var _pan_last_mouse_pos: Vector2 = Vector2.ZERO
+var _left_press_pos: Vector2 = Vector2.ZERO
+var _left_press_moved: bool = false
+var _had_multitouch: bool = false
 var _touch_points: Dictionary[int, Vector2] = {}
 var _pinch_prev_dist: float = 0.0
 var _hovered_tile: int = -1
@@ -1737,9 +1740,13 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var mm: InputEventMouseMotion = event
 		if _is_panning_camera:
-			var delta_px: Vector2 = mm.position - _pan_last_mouse_pos
-			_pan_last_mouse_pos = mm.position
-			pan_camera_by_screen_delta(delta_px)
+			if not _left_press_moved and mm.position.distance_to(_left_press_pos) > 8.0:
+				_left_press_moved = true
+				_pan_last_mouse_pos = mm.position
+			if _left_press_moved:
+				var delta_px: Vector2 = mm.position - _pan_last_mouse_pos
+				_pan_last_mouse_pos = mm.position
+				pan_camera_by_screen_delta(delta_px)
 			return
 		var hit_idx: int = _raycast_tile_at_screen_pos(mm.position)
 		_set_hovered_tile(hit_idx)
@@ -1753,20 +1760,26 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 			return
 		if mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_is_panning_camera = mb.pressed
+			_left_press_moved = mb.pressed
 			_pan_last_mouse_pos = mb.position
 			return
 		if mb.button_index == MOUSE_BUTTON_LEFT:
 			if mb.pressed:
-				var hit_idx: int = _raycast_tile_at_screen_pos(mb.position)
-				if hit_idx >= 0:
-					tile_clicked.emit(hit_idx)
-				elif _is_point_over_center_dice_screen(mb.position):
-					dice_clicked.emit()
-				else:
-					_is_panning_camera = true
-					_pan_last_mouse_pos = mb.position
+				_left_press_pos = mb.position
+				_left_press_moved = false
+				_had_multitouch = (_touch_points.size() >= 2)
+				_is_panning_camera = true
+				_pan_last_mouse_pos = mb.position
 			else:
+				var should_click: bool = _is_panning_camera and not _left_press_moved and not _had_multitouch
 				_is_panning_camera = false
+				_left_press_moved = false
+				if should_click:
+					var hit_idx: int = _raycast_tile_at_screen_pos(mb.position)
+					if hit_idx >= 0:
+						tile_clicked.emit(hit_idx)
+					elif _is_point_over_center_dice_screen(mb.position):
+						dice_clicked.emit()
 	elif event is InputEventMagnifyGesture:
 		var mg: InputEventMagnifyGesture = event
 		zoom_camera(1.0 / clampf(mg.factor, 0.75, 1.35), false)
@@ -1777,14 +1790,17 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 		var st: InputEventScreenTouch = event
 		if st.pressed:
 			_touch_points[st.index] = st.position
-			if _touch_points.size() == 2:
+			if _touch_points.size() >= 2:
 				_is_panning_camera = false
+				_had_multitouch = true
 				var pts_a: Array = _touch_points.values()
 				_pinch_prev_dist = (pts_a[0] as Vector2).distance_to(pts_a[1] as Vector2)
 		else:
 			_touch_points.erase(st.index)
 			if _touch_points.size() < 2:
 				_pinch_prev_dist = 0.0
+			if _touch_points.is_empty():
+				_had_multitouch = false
 	elif event is InputEventScreenDrag:
 		var sd: InputEventScreenDrag = event
 		_touch_points[sd.index] = sd.position

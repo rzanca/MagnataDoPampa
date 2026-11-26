@@ -197,6 +197,13 @@
       "owner_agent": "03_ui_ux_responsaveis.md",
       "status": "done",
       "notes": "Layout vertical exclusivo para Android (tabuleiro no topo, dock no polegar), ícones procedurais em MobileIconFactory, tutorial de primeiro uso pulável/desativável, permissões internet Android e URL padrão wss://magnata-do-pampa-signaling.onrender.com."
+    },
+    {
+      "id": "LOTE-25",
+      "title": "Correção do Áudio de Fundo (Loop Acústico 8s) & Pente-Fino Geral de Mecânicas",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "done",
+      "notes": "Substitui zumbido/ruído branco do loop ambiente por dedilhado acústico pampeano 8s com crossfade de borda sem clique e pausa automática em background; corrige avanço/fim de turno na falência após escapar do Xadrez com dupla, consciência de monopólio aliado no BotAI (desipotecar/liquidar), separação entre toque e arrasto/pinça no Board3D, quebra de linha da barra rápida mobile no GameHUD e parada do áudio ambiente ao fim da partida (v0.11.1)."
     }
   ]
 }

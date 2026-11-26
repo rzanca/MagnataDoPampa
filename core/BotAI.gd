@@ -289,7 +289,8 @@ func choose_tile_to_unmortgage(
 	unmortgageable_tiles: Array[int],
 	tiles: Array[Dictionary],
 	interest_rate: float,
-	property_owners: Dictionary[int, int]
+	property_owners: Dictionary[int, int],
+	teams_map: Dictionary = {}
 ) -> int:
 	if unmortgageable_tiles.is_empty():
 		return -1
@@ -308,7 +309,7 @@ func choose_tile_to_unmortgage(
 		var tile: Dictionary = tiles[tile_idx]
 		var mortgage_val: int = int(tile["mortgage"]) if tile.has("mortgage") else floori(float(tile.get("price", 0)) * 0.5)
 		var redeem_cost: int = roundi(float(mortgage_val) * (1.0 + interest_rate))
-		var in_monopoly: bool = _is_in_complete_monopoly(player_id, tile_idx, tiles, property_owners)
+		var in_monopoly: bool = _is_in_complete_monopoly(player_id, tile_idx, tiles, property_owners, teams_map)
 
 		var effective_reserve: int = reserve
 		if in_monopoly and (profile == PROFILE_MONOPOLISTA or profile == PROFILE_IMOBILIARIO):
@@ -334,7 +335,8 @@ func choose_liquidation_action(
 	mortgageable_tiles: Array[int],
 	tiles: Array[Dictionary],
 	buildings: Dictionary[int, int],
-	property_owners: Dictionary[int, int]
+	property_owners: Dictionary[int, int],
+	teams_map: Dictionary = {}
 ) -> Dictionary:
 	if int(player.get("money", 0)) >= 0:
 		return { "action": "NONE", "tile_index": -1 }
@@ -351,7 +353,7 @@ func choose_liquidation_action(
 				continue
 			var tile: Dictionary = tiles[tile_idx]
 			var price: int = int(tile.get("price", 0))
-			var in_monopoly: bool = _is_in_complete_monopoly(player_id, tile_idx, tiles, property_owners)
+			var in_monopoly: bool = _is_in_complete_monopoly(player_id, tile_idx, tiles, property_owners, teams_map)
 			var priority: int = price + (1000 if in_monopoly else 0)
 			if profile == PROFILE_ESPECULADOR and str(tile.get("type", "")) == "COMPANY":
 				priority += 400
@@ -832,7 +834,8 @@ func _is_in_complete_monopoly(
 	player_id: int,
 	tile_idx: int,
 	tiles: Array[Dictionary],
-	property_owners: Dictionary[int, int]
+	property_owners: Dictionary[int, int],
+	teams_map: Dictionary = {}
 ) -> bool:
 	if tile_idx < 0 or tile_idx >= tiles.size():
 		return false
@@ -847,7 +850,7 @@ func _is_in_complete_monopoly(
 		var t: Dictionary = tiles[i]
 		if str(t.get("type", "")) == "PROPERTY" and str(t.get("group", "")) == group_name:
 			count += 1
-			if property_owners.get(i, -1) != player_id:
+			if not _is_same_side(property_owners.get(i, -1), player_id, teams_map):
 				return false
 	return count > 0
 

@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
-    "version":  "0.11.0",
-    "build_number":  13,
+    "version":  "0.11.1",
+    "build_number":  14,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
-    "release_notes":  "v0.11.0: Repaginacao vertical Android (Portrait) com icones exclusivos, tutorial pulavel/desativavel, gestos de pinca 3D, Render Cloud WSS pre-aquecido e permissao INTERNET no APK.",
-    "built_at":  "2026-11-26T20:32:40Z",
-    "git_commit":  "659b0b0"
+    "release_notes":  "v0.11.1: Correcao definitiva do audio de fundo (loop acustico pampeano suave de 8s sem chiado ou estalo e pausa automatica em segundo plano), correcao de falencia ao escapar do Xadrez, separacao de toque vs arrasto/pinca no Android, barra rapida responsiva e melhoria nos Bots em equipe.",
+    "built_at":  "2026-11-26T23:15:21Z",
+    "git_commit":  "37271ec"
 }

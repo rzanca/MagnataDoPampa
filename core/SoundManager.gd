@@ -16,6 +16,7 @@ var _audio_volume: float = 0.75
 var _step_sfx_enabled: bool = true
 var _ambient_enabled: bool = true
 var _ambient_volume: float = 0.35
+var _app_paused: bool = false
 
 func _ready() -> void:
 	for i: int in range(POOL_SIZE):
@@ -27,6 +28,15 @@ func _ready() -> void:
 	_ambient_player.name = "AmbientBedPlayer"
 	add_child(_ambient_player)
 	_apply_volume_to_players()
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_PAUSED or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_app_paused = true
+		if _ambient_player != null and is_instance_valid(_ambient_player) and _ambient_player.playing:
+			_ambient_player.stop()
+	elif what == NOTIFICATION_APPLICATION_RESUMED or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		_app_paused = false
+		_sync_ambient_playback()
 
 func apply_preferences(prefs: Dictionary) -> void:
 	_audio_enabled = bool(prefs.get("audio_enabled", true))
@@ -65,7 +75,7 @@ func _apply_volume_to_players() -> void:
 	if _ambient_player != null and is_instance_valid(_ambient_player):
 		var amb_db: float = -80.0
 		if _audio_enabled and _ambient_enabled and _audio_volume > 0.01 and _ambient_volume > 0.01:
-			amb_db = linear_to_db(_audio_volume * _ambient_volume * 0.28)
+			amb_db = linear_to_db(_audio_volume * _ambient_volume * 0.24)
 		_ambient_player.volume_db = amb_db
 
 func set_ambient_season(season_id: String) -> void:
@@ -85,7 +95,7 @@ func stop_ambient() -> void:
 func _sync_ambient_playback() -> void:
 	if _ambient_player == null or not is_instance_valid(_ambient_player):
 		return
-	if not _audio_enabled or not _ambient_enabled or _audio_volume <= 0.01 or _ambient_volume <= 0.01 or _current_ambient_season == "":
+	if _app_paused or not _audio_enabled or not _ambient_enabled or _audio_volume <= 0.01 or _ambient_volume <= 0.01 or _current_ambient_season == "":
 		if _ambient_player.playing:
 			_ambient_player.stop()
 		return
@@ -347,61 +357,79 @@ func _concat_tones(segments: Array[Dictionary]) -> AudioStreamWAV:
 	return wav
 
 func _build_ambient_wav(season_id: String) -> AudioStreamWAV:
-	var dur: float = 4.0
+	# Loop musical suave de 8 segundos (arpejo acústico de violão pampeano sem ruído branco ou zumbido contínuo)
+	var dur: float = 8.0
 	var count: int = roundi(dur * float(SAMPLE_RATE))
-	var f_root: float = 196.0
-	var f_fifth: float = 294.0
-	var f_color: float = 247.0
-	var wind_mix: float = 0.08
-	var pulse_hz: float = 0.5
+	var notes: Array[float] = [196.00, 246.94, 293.66, 392.00, 293.66, 246.94]
+	var pad_root: float = 196.00
+	var pad_fifth: float = 293.66
 	match season_id:
 		"VERAO":
-			f_root = 147.0
-			f_fifth = 220.5
-			f_color = 294.0
-			wind_mix = 0.05
-			pulse_hz = 0.75
+			notes = [293.66, 369.99, 440.00, 587.33, 440.00, 369.99]
+			pad_root = 146.83
+			pad_fifth = 220.00
 		"OUTONO":
-			f_root = 110.0
-			f_fifth = 165.0
-			f_color = 261.5
-			wind_mix = 0.11
-			pulse_hz = 0.5
+			notes = [220.00, 261.63, 329.63, 440.00, 329.63, 261.63]
+			pad_root = 110.00
+			pad_fifth = 164.81
 		"INVERNO":
-			f_root = 82.5
-			f_fifth = 123.75
-			f_color = 196.0
-			wind_mix = 0.16
-			pulse_hz = 0.25
+			notes = [164.81, 196.00, 246.94, 329.63, 246.94, 196.00]
+			pad_root = 164.81
+			pad_fifth = 246.94
 		_:
-			f_root = 196.0
-			f_fifth = 294.0
-			f_color = 247.0
-			wind_mix = 0.07
-			pulse_hz = 0.5
+			notes = [196.00, 246.94, 293.66, 392.00, 293.66, 246.94]
+			pad_root = 196.00
+			pad_fifth = 293.66
 
-	# Quantizar frequencias para ciclos exatos em 4s (loop perfeitamente continuo sem clique)
-	var q_root: float = maxf(1.0, roundf(f_root * dur)) / dur
-	var q_fifth: float = maxf(1.0, roundf(f_fifth * dur)) / dur
-	var q_color: float = maxf(1.0, roundf(f_color * dur)) / dur
+	var q_pad_root: float = maxf(1.0, roundf(pad_root * dur)) / dur
+	var q_pad_fifth: float = maxf(1.0, roundf(pad_fifth * dur)) / dur
 
-	var pcm: PackedByteArray = PackedByteArray()
-	pcm.resize(count * 2)
-	var seed_val: int = 4242
-	var lp_wind: float = 0.0
+	var float_buf: PackedFloat32Array = PackedFloat32Array()
+	float_buf.resize(count)
+
+	# Pad harmônico muito sutil que respira suavemente ao longo do ciclo completo
 	for i: int in range(count):
 		var t_sec: float = float(i) / float(SAMPLE_RATE)
-		seed_val = (seed_val * 1103515245 + 12345) & 0x7fffffff
-		var white: float = (float(seed_val % 2000) / 1000.0) - 1.0
-		lp_wind = lp_wind * 0.96 + white * 0.04
+		var breath: float = 0.35 + 0.65 * (0.5 - 0.5 * cos(TAU * t_sec / dur))
+		var pad_val: float = (
+			sin(TAU * q_pad_root * t_sec) * 0.55 +
+			sin(TAU * q_pad_fifth * t_sec) * 0.35
+		) * (0.045 * breath)
+		float_buf[i] = pad_val
 
-		var swell: float = 0.72 + 0.28 * sin(TAU * pulse_hz * t_sec)
-		var pad: float = (
-			sin(TAU * q_root * t_sec) * 0.44 +
-			sin(TAU * q_fifth * t_sec) * 0.30 +
-			sin(TAU * q_color * t_sec) * 0.18 * swell
-		)
-		var sample_val: float = clampf((pad * 0.22 + lp_wind * wind_mix * swell), -1.0, 1.0)
+	# Dedilhado suave de violão acústico espaçado com folga natural (zero fadiga auditiva)
+	var note_times: Array[float] = [0.00, 1.30, 2.55, 3.85, 5.15, 6.40]
+	var note_dur: float = 1.45
+	var note_samples: int = roundi(note_dur * float(SAMPLE_RATE))
+	for idx_n: int in range(mini(notes.size(), note_times.size())):
+		var start_s: int = roundi(note_times[idx_n] * float(SAMPLE_RATE))
+		var freq: float = notes[idx_n]
+		for k: int in range(note_samples):
+			var dst_i: int = (start_s + k) % count
+			var t_k: float = float(k) / float(SAMPLE_RATE)
+			var t_norm: float = float(k) / float(maxi(1, note_samples - 1))
+			var env_att: float = clampf(t_k / 0.015, 0.0, 1.0)
+			var env_dec: float = exp(-3.4 * t_k)
+			var env_tail: float = clampf((1.0 - t_norm) / 0.12, 0.0, 1.0)
+			var phase: float = TAU * freq * t_k
+			var guitar: float = (
+				sin(phase) * 0.65 +
+				sin(phase * 2.0) * 0.25 * exp(-5.0 * t_k) +
+				sin(phase * 3.0) * 0.10 * exp(-9.0 * t_k)
+			) * 0.24 * env_att * env_dec * env_tail
+			float_buf[dst_i] += guitar
+
+	# Crossfade suave nas bordas para loop matematicamente sem clique
+	var fade_n: int = 551
+	var pcm: PackedByteArray = PackedByteArray()
+	pcm.resize(count * 2)
+	for i: int in range(count):
+		var edge_env: float = 1.0
+		if i < fade_n:
+			edge_env = float(i) / float(fade_n)
+		elif i >= count - fade_n:
+			edge_env = float(count - 1 - i) / float(fade_n)
+		var sample_val: float = clampf(float_buf[i] * edge_env, -1.0, 1.0)
 		var int16: int = clampi(roundi(sample_val * 32767.0), -32767, 32767)
 		var byte_off: int = i * 2
 		pcm[byte_off] = int16 & 0xFF
