@@ -286,6 +286,7 @@ func _setup_visuals() -> void:
 	hud.forfeit_match_requested.connect(_on_human_forfeit_requested)
 	hud.menu_requested.connect(open_setup_screen)
 	hud.restart_match_requested.connect(_on_restart_match_requested)
+	hud.quit_game_requested.connect(_on_quit_game_requested)
 	hud.camera_toggle_requested.connect(toggle_camera_view)
 	hud.camera_follow_toggle_requested.connect(_on_camera_follow_toggled)
 	hud.camera_reset_requested.connect(_on_camera_reset_requested)
@@ -325,6 +326,7 @@ func _setup_visuals() -> void:
 	setup_screen.start_match_requested.connect(start_match_from_setup)
 	setup_screen.help_requested.connect(_on_help_requested)
 	setup_screen.settings_requested.connect(_on_settings_requested)
+	setup_screen.quit_game_requested.connect(_on_quit_game_requested)
 	setup_screen.host_room_requested.connect(_on_host_room_requested)
 	setup_screen.join_room_requested.connect(_on_join_room_requested)
 	setup_screen.host_web_room_requested.connect(_on_host_web_room_requested)
@@ -345,6 +347,17 @@ func _on_settings_requested() -> void:
 	if hud != null:
 		hud.apply_preferences(_preferences)
 		hud.show_settings_modal()
+
+func _on_quit_game_requested() -> void:
+	_match_active = false
+	_match_session_token += 1
+	_bot_turn_token += 1
+	_save_preferences()
+	if network != null:
+		network.disconnect_all()
+	var tree: SceneTree = get_tree()
+	if tree != null and not OS.has_feature("web"):
+		tree.quit()
 
 func _load_preferences() -> void:
 	var cfg: ConfigFile = ConfigFile.new()

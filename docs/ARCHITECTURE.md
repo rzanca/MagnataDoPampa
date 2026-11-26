@@ -26,8 +26,9 @@
   - `tools/generate_pawn_art.gd` e `tools/generate_tile_art.gd`: utilitários Godot de geração de arte.
   - `tools/launcher/`: projeto Godot 4.7 separado do Launcher Inicial (`MagnataDoPampaLauncher.exe`), isolado do projeto principal via `tools/launcher/.gdignore`.
   - `tools/signaling_server/`: servidor WebSocket Node.js (`server.mjs`) para sinalização WebRTC (ignorado pelo Godot via `.gdignore`).
-  - `tools/release/`: scripts de build/exportação (`build_release.ps1` e `configure_android_export.ps1`, isolados via `.gdignore`).
+  - `tools/release/`: scripts de build/exportação unificada (`build_release.ps1`, `export_builds.ps1` e `configure_android_export.ps1`, isolados via `.gdignore`).
   - `builds/`: pasta de saída local (`latest/`, `releases/`, `manifest.json`), ignorada tanto pelo Godot (`.gdignore`) quanto pelo Git (`.gitignore`).
+  - `assets/brand/`: identidade visual oficial própria (`magnata_emblem.png`, `magnata_icon.ico`, `magnata_icon_192.png`, `magnata_banner.jpg`).
   - `.antigravity/rules.md`, `.antigravity/agents/*.md`, `.antigravity/automation/preflight_check.ps1`, `.antigravity/automation/export_builds.ps1` e `.antigravity/automation/validate_and_commit.ps1`: governança multiagente, validação headless, exportação e commits no Git.
 
 ---

@@ -3,8 +3,10 @@
 **/.godot/
 *.translation
 
-# Assistentes e ferramentas locais
+# Governanca e plugins locais de IA (nao precisam ir para o GitHub)
+.antigravity/
 .gamedev_ai/
+addons/gamedev_ai/
 
 # Saidas de build e artefatos binarios (nao versionar no GitHub)
 builds/

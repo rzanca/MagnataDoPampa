@@ -2,12 +2,12 @@
 <#
 .SYNOPSIS
     Atalho unificado para executar a automação de exportação de builds
-    (Windows .exe/.zip, Android .apk e Launcher) em .antigravity/automation/export_builds.ps1.
+    (pacote Windows com Launcher + Jogo, e Android .apk) em tools/release/export_builds.ps1.
 #>
 
 [CmdletBinding()]
 param(
-    [string[]]$Targets = @("Windows", "Android"),
+    [string[]]$Targets = @("All"),
     [string]$Version = "",
     [switch]$BumpPatch,
     [switch]$BumpMinor,
@@ -20,7 +20,6 @@ param(
     [switch]$PublishGitHubRelease
 )
 
-$RepoRoot     = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$TargetScript = Join-Path $RepoRoot ".antigravity\automation\export_builds.ps1"
+$TargetScript = Join-Path $PSScriptRoot "export_builds.ps1"
 & $TargetScript @PSBoundParameters
 exit $LASTEXITCODE

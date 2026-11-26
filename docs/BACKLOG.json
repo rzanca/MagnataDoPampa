@@ -99,6 +99,13 @@
       "owner_agent": "04_qa_devops.md",
       "status": "done",
       "notes": "Mover launcher, signaling_server, scripts de release e builds para dentro do repositório principal com .gdignore nas subpastas externas, atualizar referências, blindar .gitignore e validar preflight + headless + commit."
+    },
+    {
+      "id": "LOTE-11",
+      "title": "Identidade visual própria, botão Fechar Jogo, Launcher simplificado, pacote único Windows e limpeza GitHub",
+      "owner_agent": "00_product_manager.md",
+      "status": "done",
+      "notes": "Gerar brasão/ícone e banner próprios (assets/brand/), adicionar Fechar Jogo no SetupScreen e Pausa, remover Configurar Repo e barra fixa no Launcher, unir Windows+Launcher em zip único e remover .antigravity/addons do Git."
     }
   ]
 }

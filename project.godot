@@ -14,7 +14,7 @@ config/name="MagnataDoPampa"
 config/version="0.8.0"
 run/main_scene="uid://c8r3v51jyti2o"
 config/features=PackedStringArray("4.7", "GL Compatibility")
-config/icon="res://icon.svg"
+config/icon="res://assets/brand/magnata_emblem.png"
 
 [autoload]
 

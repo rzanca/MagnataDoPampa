@@ -20,6 +20,7 @@ signal leave_to_bot_requested
 signal forfeit_match_requested
 signal menu_requested
 signal restart_match_requested
+signal quit_game_requested
 signal camera_toggle_requested
 signal camera_follow_toggle_requested
 signal camera_reset_requested
@@ -180,6 +181,7 @@ var _pause_restart_btn: Button
 var _pause_bot_leave_btn: Button
 var _pause_forfeit_btn: Button
 var _pause_menu_btn: Button
+var _pause_quit_btn: Button
 var _help_overlay: Control
 
 var _victory_overlay: Control
@@ -2453,6 +2455,16 @@ func _build_pause_modal() -> void:
 		menu_requested.emit()
 	)
 	vbox.add_child(_pause_menu_btn)
+
+	_pause_quit_btn = Button.new()
+	_pause_quit_btn.text = "Fechar o Jogo"
+	_pause_quit_btn.visible = not OS.has_feature("web")
+	_apply_button_theme(_pause_quit_btn, "#3E1B20", "#58272E", "#2A1216", "#C95D69", Color("#FFE4E8"), false, btn_h, btn_fs, 12.0, true)
+	_pause_quit_btn.pressed.connect(func() -> void:
+		hide_pause_modal()
+		quit_game_requested.emit()
+	)
+	vbox.add_child(_pause_quit_btn)
 
 func show_pause_modal() -> void:
 	var active_count: int = 0

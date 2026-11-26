@@ -3,6 +3,7 @@ extends CanvasLayer
 signal start_match_requested(player_configs: Array[Dictionary])
 signal help_requested
 signal settings_requested
+signal quit_game_requested
 signal host_room_requested(port: int, player_name: String)
 signal join_room_requested(address: String, port: int, player_name: String)
 signal host_web_room_requested(signaling_url: String, player_name: String, turn_cfg: Dictionary)
@@ -110,7 +111,11 @@ var _web_turn_pass_edit: LineEdit
 var _web_status_label: Label
 
 var _btn_start: Button
+var _btn_quit: Button
+var _summary_pill_label: Label
 var _quick_buttons: Array[Button] = []
+var _brand_emblem_tex: Texture2D = null
+var _brand_banner_tex: Texture2D = null
 var _version_info: Dictionary = {}
 var _version_badge_label: Label
 var _update_pill_btn: Button
@@ -152,24 +157,27 @@ func open_screen() -> void:
 func close_screen() -> void:
 	visible = false
 
+func _load_texture_safe(path: String) -> Texture2D:
+	if ResourceLoader.exists(path):
+		var loaded: Resource = ResourceLoader.load(path)
+		if loaded is Texture2D:
+			return loaded as Texture2D
+	var abs_path: String = ProjectSettings.globalize_path(path)
+	if FileAccess.file_exists(abs_path):
+		var img: Image = Image.load_from_file(abs_path)
+		if img != null and not img.is_empty():
+			return ImageTexture.create_from_image(img)
+	return null
+
 func _preload_pawn_textures() -> void:
 	_pawn_textures.clear()
 	for opt: Dictionary in PAWN_OPTIONS:
 		var pid: String = str(opt["id"])
-		var path: String = "res://assets/pawns/%s.png" % pid
-		var tex: Texture2D = null
-		if ResourceLoader.exists(path):
-			var loaded: Resource = ResourceLoader.load(path)
-			if loaded is Texture2D:
-				tex = loaded as Texture2D
-		if tex == null:
-			var abs_path: String = ProjectSettings.globalize_path(path)
-			if FileAccess.file_exists(abs_path):
-				var img: Image = Image.load_from_file(abs_path)
-				if img != null and not img.is_empty():
-					tex = ImageTexture.create_from_image(img)
+		var tex: Texture2D = _load_texture_safe("res://assets/pawns/%s.png" % pid)
 		if tex != null:
 			_pawn_textures[pid] = tex
+	_brand_emblem_tex = _load_texture_safe("res://assets/brand/magnata_emblem.png")
+	_brand_banner_tex = _load_texture_safe("res://assets/brand/magnata_banner.jpg")
 
 func _make_box(bg_hex: String, border_hex: String, radius: int = 12, border_w: int = 2, shadow: int = 0) -> StyleBoxFlat:
 	var sb: StyleBoxFlat = StyleBoxFlat.new()
@@ -211,9 +219,19 @@ func _build_ui() -> void:
 	var f_scale: float = 1.18 if _is_touch_mode else 1.0
 	var ctrl_h: float = 46.0 if _is_touch_mode else 38.0
 
+	if _brand_banner_tex != null:
+		var banner_bg: TextureRect = TextureRect.new()
+		banner_bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		banner_bg.texture = _brand_banner_tex
+		banner_bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		banner_bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		banner_bg.modulate = Color(1.0, 1.0, 1.0, 0.28)
+		banner_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(banner_bg)
+
 	var backdrop: ColorRect = ColorRect.new()
 	backdrop.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	backdrop.color = Color(0.03, 0.06, 0.04, 0.92)
+	backdrop.color = Color(0.03, 0.06, 0.04, 0.84)
 	add_child(backdrop)
 
 	var outer_margin: MarginContainer = MarginContainer.new()
@@ -254,6 +272,10 @@ func _build_ui() -> void:
 	header_row.alignment = BoxContainer.ALIGNMENT_CENTER
 	root_vbox.add_child(header_row)
 
+	var left_nav: HBoxContainer = HBoxContainer.new()
+	left_nav.add_theme_constant_override("separation", 8)
+	header_row.add_child(left_nav)
+
 	var btn_settings: Button = Button.new()
 	btn_settings.text = "Ajustes"
 	_style_button(
@@ -263,13 +285,30 @@ func _build_ui() -> void:
 		"#132119",
 		"#C9A227",
 		Color("#F8E5A8"),
-		roundi(14.0 * f_scale),
-		Vector2(130.0, ctrl_h),
+		roundi(13.5 * f_scale),
+		Vector2(104.0, ctrl_h),
 		10,
 		1
 	)
 	btn_settings.pressed.connect(func() -> void: settings_requested.emit())
-	header_row.add_child(btn_settings)
+	left_nav.add_child(btn_settings)
+
+	var btn_help: Button = Button.new()
+	btn_help.text = "Regras"
+	_style_button(
+		btn_help,
+		"#1A2D23",
+		"#254032",
+		"#132119",
+		"#4E7863",
+		Color("#E9F5EE"),
+		roundi(13.5 * f_scale),
+		Vector2(104.0, ctrl_h),
+		10,
+		1
+	)
+	btn_help.pressed.connect(func() -> void: help_requested.emit())
+	left_nav.add_child(btn_help)
 
 	var title_vbox: VBoxContainer = VBoxContainer.new()
 	title_vbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -281,36 +320,29 @@ func _build_ui() -> void:
 	crest_row.add_theme_constant_override("separation", 14)
 	title_vbox.add_child(crest_row)
 
-	var crest_dim: float = 48.0 if _is_touch_mode else 40.0
-	if _pawn_textures.has("cuia"):
-		var left_crest: TextureRect = TextureRect.new()
-		left_crest.texture = _pawn_textures["cuia"]
-		left_crest.custom_minimum_size = Vector2(crest_dim, crest_dim)
-		left_crest.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		left_crest.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		crest_row.add_child(left_crest)
+	var crest_dim: float = 58.0 if _is_touch_mode else 52.0
+	var hero_crest_tex: Texture2D = _brand_emblem_tex if _brand_emblem_tex != null else _pawn_textures.get("cuia", null)
+	if hero_crest_tex != null:
+		var brand_crest: TextureRect = TextureRect.new()
+		brand_crest.texture = hero_crest_tex
+		brand_crest.custom_minimum_size = Vector2(crest_dim, crest_dim)
+		brand_crest.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		brand_crest.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		crest_row.add_child(brand_crest)
 
 	var title_lbl: Label = Label.new()
 	title_lbl.text = "MAGNATA DO PAMPA"
 	title_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if _bold_font != null:
 		title_lbl.add_theme_font_override("font", _bold_font)
-	title_lbl.add_theme_font_size_override("font_size", roundi(36.0 * f_scale))
+	title_lbl.add_theme_font_size_override("font_size", roundi(35.0 * f_scale))
 	title_lbl.add_theme_color_override("font_color", Color("#F5D06F"))
 	crest_row.add_child(title_lbl)
-
-	if _pawn_textures.has("cavalo"):
-		var right_crest: TextureRect = TextureRect.new()
-		right_crest.texture = _pawn_textures["cavalo"]
-		right_crest.custom_minimum_size = Vector2(crest_dim, crest_dim)
-		right_crest.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		right_crest.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		crest_row.add_child(right_crest)
 
 	var subtitle_lbl: Label = Label.new()
 	subtitle_lbl.text = "MODO CLÁSSICO  •  RIO GRANDE DO SUL  •  R$ 2.558 INICIAIS"
 	subtitle_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	subtitle_lbl.add_theme_font_size_override("font_size", roundi(13.0 * f_scale))
+	subtitle_lbl.add_theme_font_size_override("font_size", roundi(12.5 * f_scale))
 	subtitle_lbl.add_theme_color_override("font_color", Color("#A7C2B2"))
 	title_vbox.add_child(subtitle_lbl)
 
@@ -333,22 +365,24 @@ func _build_ui() -> void:
 	_update_pill_btn.pressed.connect(_on_update_pill_pressed)
 	version_row.add_child(_update_pill_btn)
 
-	var btn_help: Button = Button.new()
-	btn_help.text = "Regras"
+	_btn_quit = Button.new()
+	_btn_quit.text = "Fechar Jogo"
+	_btn_quit.tooltip_text = "Encerrar Magnata do Pampa com segurança"
+	_btn_quit.visible = not OS.has_feature("web")
 	_style_button(
-		btn_help,
-		"#1A2D23",
-		"#254032",
-		"#132119",
-		"#4E7863",
-		Color("#E9F5EE"),
-		roundi(14.0 * f_scale),
-		Vector2(130.0, ctrl_h),
+		_btn_quit,
+		"#3E1D21",
+		"#58292F",
+		"#2B1316",
+		"#C95D69",
+		Color("#FFE6E9"),
+		roundi(13.5 * f_scale),
+		Vector2(138.0, ctrl_h),
 		10,
 		1
 	)
-	btn_help.pressed.connect(func() -> void: help_requested.emit())
-	header_row.add_child(btn_help)
+	_btn_quit.pressed.connect(func() -> void: quit_game_requested.emit())
+	header_row.add_child(_btn_quit)
 
 	# --- Barra de Modo (Local | P2P LAN ENet | Multiplayer Web WebRTC) ---
 	var mode_row: HBoxContainer = HBoxContainer.new()
@@ -687,9 +721,20 @@ func _build_ui() -> void:
 	root_vbox.add_child(_error_label)
 
 	# --- Rodapé CTA ---
+	var footer_col: VBoxContainer = VBoxContainer.new()
+	footer_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	footer_col.add_theme_constant_override("separation", 6)
+	root_vbox.add_child(footer_col)
+
+	_summary_pill_label = Label.new()
+	_summary_pill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_summary_pill_label.add_theme_font_size_override("font_size", roundi(12.5 * f_scale))
+	_summary_pill_label.add_theme_color_override("font_color", Color("#A8C4B4"))
+	footer_col.add_child(_summary_pill_label)
+
 	var footer_row: HBoxContainer = HBoxContainer.new()
 	footer_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	root_vbox.add_child(footer_row)
+	footer_col.add_child(footer_row)
 
 	_btn_start = Button.new()
 	_btn_start.text = "Iniciar Partida"
@@ -708,6 +753,7 @@ func _build_ui() -> void:
 	_btn_start.pressed.connect(_on_start_pressed)
 	footer_row.add_child(_btn_start)
 	_refresh_mode_tabs()
+	_refresh_table_summary()
 
 func _build_slot_card(slot_idx: int, f_scale: float, ctrl_h: float) -> PanelContainer:
 	var card: PanelContainer = PanelContainer.new()
@@ -917,6 +963,29 @@ func _refresh_count_buttons() -> void:
 func _refresh_visible_slots() -> void:
 	for i: int in range(_slot_rows.size()):
 		_slot_rows[i].visible = (i < _player_count)
+	_refresh_table_summary()
+
+func _refresh_table_summary() -> void:
+	if _summary_pill_label == null:
+		return
+	var humans: int = 0
+	var bots: int = 0
+	for i: int in range(mini(_player_count, _slot_is_bot.size())):
+		if _slot_is_bot[i]:
+			bots += 1
+		else:
+			humans += 1
+	var mode_txt: String = "Local"
+	if _net_mode != 0:
+		mode_txt = "Web (WebRTC)" if _net_transport == 2 else "P2P LAN (ENet)"
+	_summary_pill_label.text = "Mesa %s  •  %d Estanceiros (%d Humano%s, %d [BOT]%s)" % [
+		mode_txt,
+		_player_count,
+		humans,
+		"s" if humans != 1 else "",
+		bots,
+		"s" if bots != 1 else ""
+	]
 
 func _refresh_slot_type_button(slot_idx: int) -> void:
 	var f_scale: float = 1.18 if _is_touch_mode else 1.0
@@ -1015,6 +1084,7 @@ func _toggle_slot_type(slot_idx: int) -> void:
 	else:
 		if current_name == "" or _is_generic_bot_name(current_name):
 			_slot_name_edits[slot_idx].text = "Jogador %d" % (slot_idx + 1)
+	_refresh_table_summary()
 
 func _is_pawn_taken_by_other_active(slot_idx: int, pawn_idx: int) -> bool:
 	for j: int in range(_player_count):

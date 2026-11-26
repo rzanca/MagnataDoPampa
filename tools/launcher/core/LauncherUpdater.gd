@@ -89,9 +89,11 @@ func _load_settings() -> void:
 		if parsed is Dictionary:
 			var src: Dictionary = parsed as Dictionary
 			for k: Variant in src.keys():
-				_settings[str(k)] = src[k]
-	if str(_settings.get("github_repo", "")).strip_edges() == "":
-		_settings["github_repo"] = str(_base_config.get("github_repo", "")).strip_edges()
+				var k_str: String = str(k)
+				# O repositorio oficial vem sempre fixo do launcher_config.json embutido
+				if k_str != "github_repo":
+					_settings[k_str] = src[k]
+	_settings["github_repo"] = str(_base_config.get("github_repo", "")).strip_edges()
 
 func save_settings(github_repo: String, github_token: String, custom_install_dir: String) -> void:
 	_settings["github_repo"] = github_repo.strip_edges()
@@ -111,13 +113,13 @@ func get_settings() -> Dictionary:
 func resolve_install_dir() -> String:
 	var custom_dir: String = str(_settings.get("custom_install_dir", "")).strip_edges()
 	if custom_dir != "" and DirAccess.dir_exists_absolute(custom_dir):
-		return custom_dir
+		return custom_dir.simplify_path()
 	if OS.has_feature("standalone"):
-		return OS.get_executable_path().get_base_dir()
-	var dev_builds: String = ProjectSettings.globalize_path("res://../../builds/latest")
+		return OS.get_executable_path().get_base_dir().simplify_path()
+	var dev_builds: String = ProjectSettings.globalize_path("res://../../builds/latest").simplify_path()
 	if DirAccess.dir_exists_absolute(dev_builds):
 		return dev_builds
-	return OS.get_executable_path().get_base_dir()
+	return OS.get_executable_path().get_base_dir().simplify_path()
 
 func get_game_exe_name() -> String:
 	var name_val: String = str(_base_config.get("game_exe_name", "MagnataDoPampa.exe")).strip_edges()
@@ -473,6 +475,7 @@ func _extract_zip_safely(zip_path: String, dest_dir: String) -> bool:
 		return false
 
 	var entries: PackedStringArray = reader.get_files()
+	var running_exe_name: String = OS.get_executable_path().get_file().to_lower() if OS.has_feature("standalone") else ""
 	var wrote_any: bool = false
 	for entry: String in entries:
 		if entry.ends_with("/") or entry.contains(".."):
@@ -481,6 +484,8 @@ func _extract_zip_safely(zip_path: String, dest_dir: String) -> bool:
 		if rel_clean == "":
 			continue
 		var target_path: String = dest_dir.path_join(rel_clean)
+		if running_exe_name != "" and rel_clean.get_file().to_lower() == running_exe_name:
+			target_path = dest_dir.path_join(rel_clean + ".pending")
 		var parent_dir: String = target_path.get_base_dir()
 		if parent_dir != "":
 			DirAccess.make_dir_recursive_absolute(parent_dir)
