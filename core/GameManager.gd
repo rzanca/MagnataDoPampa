@@ -73,6 +73,7 @@ var _next_trade_offer_id: int = 1
 var _auction_state: Dictionary = {}
 var _pending_periodic_auction: bool = false
 var _auction_bot_token: int = 0
+var _player_auctioned_this_turn: bool = false
 
 var _last_tile_summary: String = "Configure a partida para começar"
 var _selected_property_tile: int = -1
@@ -268,6 +269,9 @@ func _setup_visuals() -> void:
 	hud.trade_offer_responded.connect(_on_human_trade_offer_responded)
 	hud.auction_bid_submitted.connect(_on_human_auction_bid_submitted)
 	hud.auction_pass_submitted.connect(_on_human_auction_pass_submitted)
+	hud.auction_owned_requested.connect(_on_human_auction_owned_requested)
+	hud.leave_to_bot_requested.connect(_on_human_leave_to_bot_requested)
+	hud.forfeit_match_requested.connect(_on_human_forfeit_requested)
 	hud.menu_requested.connect(open_setup_screen)
 	hud.restart_match_requested.connect(_on_restart_match_requested)
 	hud.camera_toggle_requested.connect(toggle_camera_view)
@@ -449,6 +453,7 @@ func _reset_match_state() -> void:
 	_pending_trade_offer.clear()
 	_auction_state.clear()
 	_pending_periodic_auction = false
+	_player_auctioned_this_turn = false
 	_last_victory_info.clear()
 	_last_tile_summary = "Configure a partida para começar"
 	_reset_chance_deck()
@@ -570,6 +575,7 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	_pending_trade_offer.clear()
 	_auction_state.clear()
 	_pending_periodic_auction = false
+	_player_auctioned_this_turn = false
 	_auction_bot_token += 1
 	_last_victory_info.clear()
 	current_player_index = 0
@@ -627,6 +633,10 @@ func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 		and tile_type == "PROPERTY"
 		and has_monopoly
 	)
+	var can_auction_owned: bool = (
+		is_owner_active
+		and _can_auction_owned_tile(active_pid, tile_idx)
+	)
 
 	var can_build: bool = is_owner_active and _can_build_on(active_pid, tile_idx)
 	var build_label: String = "+Casa"
@@ -673,7 +683,8 @@ func _build_deed_inspection_info(tile_idx: int) -> Dictionary:
 		"mortgage_label": mortgage_label,
 		"can_offer_in_trade": can_offer_in_trade,
 		"can_propose_trade": can_trade_this_tile,
-		"can_open_build_cart": can_cart_this_tile
+		"can_open_build_cart": can_cart_this_tile,
+		"can_auction_owned": can_auction_owned
 	}
 
 func _on_tile_inspected(tile_idx: int) -> void:
@@ -683,12 +694,18 @@ func _on_tile_inspected(tile_idx: int) -> void:
 		return
 	hud.show_deed_modal(_build_deed_inspection_info(tile_idx))
 
-func _on_player_inspected(player_id: int) -> void:
-	if not _match_active or hud == null:
-		return
+func _build_portfolio_inspection_info(player_id: int) -> Dictionary:
 	var target: Dictionary = _get_player_by_id(player_id)
 	if target.is_empty():
-		return
+		return {}
+
+	var active_pid: int = int(players[current_player_index].get("id", -1)) if (not players.is_empty() and current_player_index >= 0 and current_player_index < players.size()) else -1
+	var can_manage_owner: bool = (
+		active_pid >= 0
+		and active_pid == player_id
+		and (not _is_human_input_blocked())
+		and (not _is_auction_active())
+	)
 
 	var owned_props: Array = target.get("properties", [])
 	var deeds_list: Array[Dictionary] = []
@@ -737,12 +754,20 @@ func _on_player_inspected(player_id: int) -> void:
 			var mult: int = int(tile.get("multiplier", 50))
 			rent_text = "Aluguel: dados × R$ %d" % mult
 		elif tile_type == "PROPERTY":
-			var rents: Array = tile.get("rents", [0])
-			var safe_lvl: int = clampi(b_lvl, 0, rents.size() - 1)
-			var rent_val: int = int(rents[safe_lvl])
+			var rents: Array = tile.get("rent", [0])
+			var safe_lvl: int = clampi(b_lvl, 0, maxi(0, rents.size() - 1))
+			var rent_val: int = int(rents[safe_lvl]) if not rents.is_empty() else 0
 			if b_lvl == 0 and has_mono:
 				rent_val *= 2
 			rent_text = "Aluguel atual: R$ %d" % rent_val
+
+		var m_val: int = _get_mortgage_value(tile)
+		var r_cost: int = _get_redeem_cost(tile)
+		var sell_val: int = _get_building_sell_value(tile)
+		var can_mort: bool = can_manage_owner and _can_toggle_mortgage(player_id, tid)
+		var can_sell: bool = can_manage_owner and _can_sell_building_on(player_id, tid)
+		var mort_lbl: String = ("Desipotecar (-R$ %d)" % r_cost) if is_mort else ("Hipotecar (+R$ %d)" % m_val)
+		var sell_lbl: String = ("-Hotel (+R$ %d)" % sell_val) if b_lvl >= 5 else ("-Casa (+R$ %d)" % sell_val)
 
 		deeds_list.append({
 			"tile_index": tid,
@@ -753,11 +778,17 @@ func _on_player_inspected(player_id: int) -> void:
 			"building_level": b_lvl,
 			"is_mortgaged": is_mort,
 			"has_monopoly": has_mono,
-			"rent_text": rent_text
+			"rent_text": rent_text,
+			"mortgage_value": m_val,
+			"redeem_cost": r_cost,
+			"can_mortgage": can_mort,
+			"mortgage_label": mort_lbl,
+			"can_sell_building": can_sell,
+			"sell_building_label": sell_lbl
 		})
 
 	var p_color: Color = board_view.get_player_color(player_id) if board_view != null else Color("#2A9D8F")
-	var info: Dictionary = {
+	return {
 		"id": player_id,
 		"name": str(target.get("name", "Estanceiro")),
 		"is_bot": bool(target.get("is_bot", false)),
@@ -765,6 +796,8 @@ func _on_player_inspected(player_id: int) -> void:
 		"in_jail": bool(target.get("in_jail", false)),
 		"jail_free_cards": int(target.get("jail_free_cards", 0)),
 		"money": int(target.get("money", 0)),
+		"max_liquidatable": _get_max_liquidatable_cash(player_id),
+		"can_manage_owner": can_manage_owner,
 		"pawn_id": str(target.get("pawn_id", "cuia")),
 		"pawn_name": str(target.get("pawn_name", "")),
 		"color": p_color,
@@ -774,7 +807,13 @@ func _on_player_inspected(player_id: int) -> void:
 		"monopolies": monopolies,
 		"deeds": deeds_list
 	}
-	hud.show_player_portfolio_modal(info)
+
+func _on_player_inspected(player_id: int) -> void:
+	if not _match_active or hud == null:
+		return
+	var info: Dictionary = _build_portfolio_inspection_info(player_id)
+	if not info.is_empty():
+		hud.show_player_portfolio_modal(info)
 
 func _is_current_player_bot() -> bool:
 	if not _match_active or players.is_empty() or current_player_index < 0 or current_player_index >= players.size():
@@ -938,6 +977,106 @@ func _on_human_mortgage_pressed(tile_idx: int) -> void:
 		network.send_action_to_host("MORTGAGE", { "tile_index": tile_idx })
 		return
 	toggle_mortgage(tile_idx)
+
+func _on_human_auction_owned_requested(tile_idx: int) -> void:
+	if _is_human_input_blocked():
+		return
+	if _is_network_client():
+		network.send_action_to_host("AUCTION_OWNED", { "tile_index": tile_idx })
+		return
+	start_owned_property_auction(tile_idx)
+
+func _on_human_leave_to_bot_requested() -> void:
+	if not _match_active or current_state == TurnState.GAME_OVER:
+		return
+	if _is_network_client():
+		network.send_action_to_host("RESIGN_TO_BOT", {})
+		network.disconnect_network("Você passou sua vaga para um [BOT] e saiu da sala.")
+		_reset_match_state()
+		if setup_screen != null:
+			setup_screen.open_screen()
+		return
+	var target_pid: int = _get_local_leave_candidate_id()
+	if target_pid >= 0:
+		resign_to_bot(target_pid)
+
+func _on_human_forfeit_requested() -> void:
+	if not _match_active or current_state == TurnState.GAME_OVER:
+		return
+	if _is_network_client():
+		network.send_action_to_host("FORFEIT", {})
+		network.disconnect_network("Você declarou desistência e saiu da sala.")
+		_reset_match_state()
+		if setup_screen != null:
+			setup_screen.open_screen()
+		return
+	var target_pid: int = _get_local_leave_candidate_id()
+	if target_pid >= 0:
+		forfeit_player(target_pid)
+
+func _get_local_leave_candidate_id() -> int:
+	if players.is_empty():
+		return -1
+	if _is_online_match():
+		return _get_local_player_id()
+	if current_player_index >= 0 and current_player_index < players.size():
+		var cp: Dictionary = players[current_player_index]
+		if not bool(cp.get("is_bot", false)) and not bool(cp.get("bankrupt", false)):
+			return int(cp.get("id", -1))
+	for p: Dictionary in players:
+		if not bool(p.get("is_bot", false)) and not bool(p.get("bankrupt", false)):
+			return int(p.get("id", -1))
+	return -1
+
+func resign_to_bot(player_id: int) -> bool:
+	if not _match_active or current_state == TurnState.GAME_OVER or _is_network_client():
+		return false
+	var target: Dictionary = _get_player_by_id(player_id)
+	if target.is_empty() or bool(target.get("bankrupt", false)) or bool(target.get("is_bot", false)):
+		return false
+	if _count_active_players() < 2:
+		return false
+
+	var hidden_arr: Array[String] = bot_ai.assign_hidden_profiles(1)
+	var assigned_prof: String = hidden_arr[0] if not hidden_arr.is_empty() else BotAIClass.PROFILE_CONSERVADOR
+	var p_name: String = str(target.get("name", "Estanceiro"))
+	target["is_bot"] = true
+	target["peer_id"] = 0
+	target["bot_profile"] = assigned_prof
+
+	_log_both("%s saiu e passou a vaga para [BOT]." % p_name)
+	_last_tile_summary = "%s passou a vaga para [BOT]." % p_name
+	_broadcast_toast_event("Assumido por [BOT]", "%s deixou a mesa e agora joga como [BOT]." % p_name, "turn")
+	_sync_hud()
+
+	var cur_pid: int = int(players[current_player_index].get("id", -1)) if (current_player_index >= 0 and current_player_index < players.size()) else -1
+	if _is_auction_active():
+		_maybe_step_auction_bot()
+	elif cur_pid == player_id:
+		call_deferred("_maybe_start_bot_turn")
+	return true
+
+func forfeit_player(player_id: int) -> bool:
+	if not _match_active or current_state == TurnState.GAME_OVER or _is_network_client():
+		return false
+	var target: Dictionary = _get_player_by_id(player_id)
+	if target.is_empty() or bool(target.get("bankrupt", false)):
+		return false
+
+	var p_name: String = str(target.get("name", "Estanceiro"))
+	var was_active: bool = (
+		current_player_index >= 0
+		and current_player_index < players.size()
+		and int(players[current_player_index].get("id", -1)) == player_id
+	)
+	_log_both("%s declarou desistência da partida!" % p_name)
+	_last_creditor_id = -1
+	_check_bankruptcy(target, true, -1)
+	if current_state != TurnState.GAME_OVER and was_active:
+		_advance_turn_after_bankruptcy(player_id)
+	else:
+		_sync_hud()
+	return true
 
 func _on_human_end_turn_pressed() -> void:
 	if _is_human_input_blocked():
@@ -1127,6 +1266,24 @@ func _has_liquidatable_assets(player_id: int) -> bool:
 		if not mortgaged_tiles.get(tid, false):
 			return true
 	return false
+
+func _get_max_liquidatable_cash(player_id: int) -> int:
+	var player: Dictionary = _get_player_by_id(player_id)
+	if player.is_empty() or bool(player.get("bankrupt", false)):
+		return 0
+	var total: int = 0
+	var owned_props: Array = player.get("properties", [])
+	for p_idx: Variant in owned_props:
+		var tid: int = int(p_idx)
+		if tid < 0 or tid >= tiles.size():
+			continue
+		var tile: Dictionary = tiles[tid]
+		var lvl: int = property_buildings.get(tid, 0)
+		if lvl > 0:
+			total += _get_building_sell_value(tile) * lvl
+		if not mortgaged_tiles.get(tid, false):
+			total += _get_mortgage_value(tile)
+	return total
 
 func _can_end_turn() -> bool:
 	if not _match_active or _is_animating or _is_auction_active() or players.is_empty():
@@ -1559,10 +1716,17 @@ func _sync_hud() -> void:
 		"bank_hotels_left": bank_hotels_left,
 		"match_active": _match_active
 	})
-	if _match_active and not players.is_empty() and hud.has_method("get_open_deed_tile_index"):
-		var open_deed_idx: int = int(hud.call("get_open_deed_tile_index"))
-		if open_deed_idx >= 0 and open_deed_idx < tiles.size():
-			hud.show_deed_modal(_build_deed_inspection_info(open_deed_idx))
+	if _match_active and not players.is_empty():
+		if hud.has_method("get_open_deed_tile_index"):
+			var open_deed_idx: int = int(hud.call("get_open_deed_tile_index"))
+			if open_deed_idx >= 0 and open_deed_idx < tiles.size():
+				hud.show_deed_modal(_build_deed_inspection_info(open_deed_idx))
+		if hud.has_method("get_open_portfolio_player_id"):
+			var open_port_pid: int = int(hud.call("get_open_portfolio_player_id"))
+			if open_port_pid >= 0:
+				var p_info: Dictionary = _build_portfolio_inspection_info(open_port_pid)
+				if not p_info.is_empty():
+					hud.show_player_portfolio_modal(p_info)
 	_broadcast_state_if_host()
 
 func _maybe_start_bot_turn() -> void:
@@ -2477,23 +2641,27 @@ func _draw_chance_card(player: Dictionary) -> void:
 		_:
 			current_state = TurnState.MANAGEMENT
 
-func _check_bankruptcy(player: Dictionary, _force_bankrupt: bool = false, creditor_override: int = -2) -> void:
+func _check_bankruptcy(player: Dictionary, force_bankrupt: bool = false, creditor_override: int = -2) -> void:
 	var target_pid: int = int(player["id"])
 	var is_active_turn_player: bool = (not players.is_empty() and int(players[current_player_index]["id"]) == target_pid)
 
-	if int(player["money"]) >= 0:
+	if not force_bankrupt and int(player["money"]) >= 0:
 		if is_active_turn_player:
 			_last_creditor_id = -1
 		return
 
-	# Regra Clássica: nunca decreta falência enquanto o jogador possuir construções para vender (50%)
-	# ou escrituras desipotecadas para hipotecar/negociar.
-	if _has_liquidatable_assets(target_pid):
-		if is_active_turn_player:
-			_has_extra_roll = false
-			doubles_count = 0
-		_log_both("Atenção! %s está no vermelho (R$ %d): venda construções ou hipoteque escrituras antes de falir." % [str(player["name"]), int(player["money"])])
-		return
+	# Regra Clássica + Liquidação Inteligente:
+	# Se houver patrimônio liquidável que cubra a dívida, exige liquidação antes de falir.
+	# Se o máximo liquidável não compensar a dívida (saldo + máximo < 0), decreta falência automática imediata!
+	if not force_bankrupt and _has_liquidatable_assets(target_pid):
+		var max_liq: int = _get_max_liquidatable_cash(target_pid)
+		if (int(player["money"]) + max_liq) >= 0:
+			if is_active_turn_player:
+				_has_extra_roll = false
+				doubles_count = 0
+			_log_both("Atenção! %s está no vermelho (R$ %d): liquide até R$ %d em obras/hipotecas antes de falir." % [str(player["name"]), int(player["money"]), max_liq])
+			return
+		_log_both("Dívida de %s (R$ %d) supera o patrimônio liquidável máximo (R$ %d): falência automática decretada!" % [str(player["name"]), int(player["money"]), max_liq])
 
 	player["bankrupt"] = true
 	if is_active_turn_player:
@@ -2657,6 +2825,7 @@ func _advance_turn_after_bankruptcy(finished_player_id: int) -> void:
 	_is_bot_thinking = false
 	_is_animating = false
 	_bot_traded_this_turn = false
+	_player_auctioned_this_turn = false
 	if not _pending_trade_offer.is_empty():
 		_pending_trade_offer.clear()
 		if hud != null:
@@ -2966,6 +3135,76 @@ func _pick_periodic_auction_tile() -> int:
 		return -1
 	return candidates[randi_range(0, candidates.size() - 1)]
 
+func _can_auction_owned_tile(player_id: int, tile_idx: int) -> bool:
+	if not _match_active or _is_animating or _is_auction_active() or _player_auctioned_this_turn or current_state == TurnState.GAME_OVER or current_state == TurnState.MOVING:
+		return false
+	if tile_idx < 0 or tile_idx >= tiles.size():
+		return false
+	if property_owners.get(tile_idx, -1) != player_id:
+		return false
+	var t_type: String = str(tiles[tile_idx].get("type", ""))
+	if t_type != "PROPERTY" and t_type != "COMPANY":
+		return false
+	if mortgaged_tiles.get(tile_idx, false) or _group_has_buildings(tile_idx):
+		return false
+	return _count_active_players() >= 2
+
+func start_owned_property_auction(tile_idx: int) -> bool:
+	if not _match_active or _is_network_client() or _is_auction_active() or players.is_empty():
+		return false
+	if current_player_index < 0 or current_player_index >= players.size():
+		return false
+	var seller: Dictionary = players[current_player_index]
+	var seller_id: int = int(seller.get("id", -1))
+	if not _can_auction_owned_tile(seller_id, tile_idx):
+		return false
+
+	var tile: Dictionary = tiles[tile_idx]
+	var t_type: String = str(tile.get("type", ""))
+	var base_price: int = int(tile.get("price", 100))
+	var min_bid: int = maxi(20, roundi((float(base_price) * 0.5) / 10.0) * 10)
+	var eligible: Array[int] = []
+	for p: Dictionary in players:
+		var pid: int = int(p.get("id", -1))
+		if pid != seller_id and not bool(p.get("bankrupt", false)) and int(p.get("money", 0)) >= min_bid:
+			eligible.append(pid)
+	if eligible.is_empty():
+		_log_both("Nenhum adversário possui saldo mínimo (R$ %d) para abrir leilão de %s." % [min_bid, str(tile.get("name", "Lote"))])
+		return false
+
+	var color_hex: String = str(tile.get("color", "#2D5248"))
+	if color_hex == "":
+		color_hex = "#2D5248"
+
+	_player_auctioned_this_turn = true
+	_auction_bot_token += 1
+	_auction_state = {
+		"active": true,
+		"tile_index": tile_idx,
+		"tile_name": str(tile.get("name", "Terreno")),
+		"tile_type": t_type,
+		"group_name": str(tile.get("group", "")),
+		"color_hex": color_hex,
+		"tile_price": base_price,
+		"min_bid": min_bid,
+		"current_bid": 0,
+		"highest_bidder_id": -1,
+		"highest_bidder_name": "",
+		"seller_id": seller_id,
+		"seller_name": str(seller.get("name", "Estanceiro")),
+		"eligible_ids": eligible,
+		"passed_ids": [],
+		"turn_bidder_index": 0
+	}
+
+	_log_both("=== LEILÃO PARTICULAR: %s ofertou %s (lance inicial R$ %d)! ===" % [str(seller.get("name", "Estanceiro")), str(tile["name"]), min_bid])
+	_broadcast_toast_event("Leilão de Terreno!", "%s colocou %s à venda a partir de R$ %d." % [str(seller.get("name", "Estanceiro")), str(tile["name"]), min_bid], "turn")
+	if hud != null:
+		hud.hide_deed_modal()
+	_sync_auction_ui_and_network()
+	_maybe_step_auction_bot()
+	return true
+
 func start_periodic_land_auction(forced_tile_idx: int = -1) -> bool:
 	if not _match_active or _is_network_client() or _is_auction_active() or current_state == TurnState.GAME_OVER:
 		return false
@@ -3115,18 +3354,31 @@ func _finalize_auction() -> void:
 	var tile_name: String = str(_auction_state.get("tile_name", "Terreno"))
 	var winner_id: int = int(_auction_state.get("highest_bidder_id", -1))
 	var winning_bid: int = int(_auction_state.get("current_bid", 0))
+	var seller_id: int = int(_auction_state.get("seller_id", -1))
 	_auction_state.clear()
 
-	if winner_id >= 0 and winning_bid > 0 and tile_idx >= 0 and tile_idx < tiles.size() and not property_owners.has(tile_idx):
+	if winner_id >= 0 and winning_bid > 0 and tile_idx >= 0 and tile_idx < tiles.size():
 		var winner: Dictionary = _get_player_by_id(winner_id)
-		if not winner.is_empty() and int(winner.get("money", 0)) >= winning_bid:
+		var is_valid_bank_sale: bool = (seller_id < 0 and not property_owners.has(tile_idx))
+		var is_valid_player_sale: bool = (seller_id >= 0 and property_owners.get(tile_idx, -1) == seller_id and winner_id != seller_id)
+		if (is_valid_bank_sale or is_valid_player_sale) and not winner.is_empty() and int(winner.get("money", 0)) >= winning_bid:
 			winner["money"] = int(winner["money"]) - winning_bid
+			if seller_id >= 0:
+				var seller: Dictionary = _get_player_by_id(seller_id)
+				if not seller.is_empty():
+					seller["money"] = int(seller["money"]) + winning_bid
+					(seller["properties"] as Array).erase(tile_idx)
+					if int(seller["money"]) >= 0 and not players.is_empty() and int(players[current_player_index].get("id", -1)) == seller_id:
+						_last_creditor_id = -1
 			property_owners[tile_idx] = winner_id
 			var w_props: Array = winner["properties"]
 			if not (tile_idx in w_props):
 				w_props.append(tile_idx)
 			property_purchased.emit(winner_id, tile_idx, winning_bid)
-			_log_both("Martelo batido! %s arrematou %s no leilão por R$ %d!" % [str(winner["name"]), tile_name, winning_bid])
+			if seller_id >= 0:
+				_log_both("Martelo batido! %s comprou %s de %s em leilão por R$ %d!" % [str(winner["name"]), tile_name, str(_get_player_by_id(seller_id).get("name", "Vendedor")), winning_bid])
+			else:
+				_log_both("Martelo batido! %s arrematou %s no leilão por R$ %d!" % [str(winner["name"]), tile_name, winning_bid])
 			_broadcast_toast_event("Leilão Arrematado!", "%s levou %s por R$ %d." % [str(winner["name"]), tile_name, winning_bid], "positive")
 			if board_view != null:
 				board_view.update_ownership(property_owners, mortgaged_tiles)
@@ -3134,7 +3386,10 @@ func _finalize_auction() -> void:
 		else:
 			_log_both("Leilão encerrado sem arremate válido para %s." % tile_name)
 	else:
-		_log_both("Leilão encerrado sem lances — %s permanece livre no Banco." % tile_name)
+		if seller_id >= 0:
+			_log_both("Leilão encerrado sem lances — %s continua com o dono atual." % tile_name)
+		else:
+			_log_both("Leilão encerrado sem lances — %s permanece livre no Banco." % tile_name)
 
 	_sync_hud()
 	if hud != null:
@@ -3230,16 +3485,28 @@ func _on_disconnect_network_requested() -> void:
 
 func _on_lobby_config_changed() -> void:
 	if _is_network_host() and not _match_active:
+		if setup_screen != null and network != null:
+			var snap: Dictionary = setup_screen.get_lobby_snapshot_for_network()
+			var raw_slots: Variant = snap.get("slots", [])
+			if raw_slots is Array and not (raw_slots as Array).is_empty() and (raw_slots as Array)[0] is Dictionary:
+				var host_name: String = str(((raw_slots as Array)[0] as Dictionary).get("name", "")).strip_edges()
+				if host_name != "":
+					network.update_peer_display_name(1, host_name)
 		_broadcast_current_lobby()
 
-func _on_setup_lobby_pref_requested(pawn_idx: int, color_idx: int) -> void:
+func _on_setup_lobby_pref_requested(pawn_idx: int, color_idx: int, player_name: String = "") -> void:
 	if _is_network_client() and not _match_active and network != null:
-		network.send_lobby_pref_to_host(pawn_idx, color_idx)
+		network.send_lobby_pref_to_host(pawn_idx, color_idx, player_name)
 
-func _on_network_client_lobby_pref(sender_peer_id: int, pawn_idx: int, color_idx: int) -> void:
+func _on_network_client_lobby_pref(sender_peer_id: int, pawn_idx: int, color_idx: int, player_name: String = "") -> void:
 	if not _is_network_host() or _match_active or setup_screen == null:
 		return
-	var _applied: bool = setup_screen.apply_remote_peer_selection(sender_peer_id, pawn_idx, color_idx)
+	var _applied: bool = setup_screen.apply_remote_peer_selection(sender_peer_id, pawn_idx, color_idx, player_name)
+	var clean_name: String = player_name.strip_edges()
+	if clean_name != "" and network != null:
+		if clean_name.length() > 20:
+			clean_name = clean_name.substr(0, 20)
+		network.update_peer_display_name(sender_peer_id, clean_name)
 	_broadcast_current_lobby()
 
 func _broadcast_current_lobby() -> void:
@@ -3518,6 +3785,17 @@ func _on_network_client_action(sender_peer_id: int, session_id: int, action_name
 	if session_id != _active_net_session_id:
 		return
 
+	if action_name == "RESIGN_TO_BOT" or action_name == "FORFEIT":
+		for p: Dictionary in players:
+			if not bool(p.get("is_bot", false)) and not bool(p.get("bankrupt", false)) and int(p.get("peer_id", 0)) == sender_peer_id:
+				var target_pid: int = int(p.get("id", -1))
+				if action_name == "RESIGN_TO_BOT":
+					resign_to_bot(target_pid)
+				else:
+					forfeit_player(target_pid)
+				break
+		return
+
 	if action_name == "TRADE_RESPOND":
 		if _pending_trade_offer.is_empty():
 			return
@@ -3570,6 +3848,8 @@ func _on_network_client_action(sender_peer_id: int, session_id: int, action_name
 				apply_construction_cart(raw_lvls as Dictionary)
 		"MORTGAGE":
 			toggle_mortgage(int(params.get("tile_index", -1)))
+		"AUCTION_OWNED":
+			start_owned_property_auction(int(params.get("tile_index", -1)))
 		"TRADE":
 			propose_trade(
 				int(params.get("target_id", -1)),

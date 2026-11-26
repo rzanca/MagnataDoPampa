@@ -64,6 +64,20 @@
       "owner_agent": "00_product_manager.md",
       "status": "done",
       "notes": "Remover aba separada Escrituras mantendo atalho Minhas Escrituras/Quitar Dívida -> Carteira -> Carta do Lote com hipoteca, construções, carrinho e troca; implementar Leilão Farroupilha ou Rateio de Chimarrão ao parar na casa 20."
+    },
+    {
+      "id": "LOTE-06",
+      "title": "Correção de nome P2P, liquidação/hipotecas/falência automática, leilão próprio e sair para [BOT]",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "done",
+      "notes": "Permitir editar nome na sala online; calcular máximo liquidável para falência automática e filtros/ações de hipoteca; leilão de terreno próprio pela Carta; passar vaga para [BOT] ao sair."
+    },
+    {
+      "id": "LOTE-07",
+      "title": "Áudio procedural com controles e interatividade UI/UX avançada no tabuleiro e Carta",
+      "owner_agent": "03_engenheiro_ui_hibrida.md",
+      "status": "in_progress",
+      "notes": "Criar core/SoundManager.gd procedural (AudioStreamWAV) com controles nos Ajustes e barra rápida; clique nos dados 3D para rolar; chips de grupo navegáveis na Carta do Lote."
     }
   ]
 }

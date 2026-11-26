@@ -29,3 +29,7 @@
   - Ao parar na casa `20` (`FREE_PARKING`), dispara celebração temática sem criar bolão inflacionário:
     1. Havendo terrenos/companhias livres no Banco e `>= 2` jogadores solventes para o lance mínimo: convoca imediatamente um **Leilão Farroupilha (Acampamento de Remates)** de um lote livre.
     2. Sem lotes livres ou sem quórum para leilão: realiza o **Rateio de Chimarrão no Galpão** (`R$ 20` simbólicos de cada adversário ativo com saldo suficiente — soma zero) ou pró-labore único de `R$ 50` da Semana Farroupilha caso nenhum adversário possua saldo.
+- **Liquidação Inteligente, Hipotecas e Falência Automática:** A Carteira (`Minhas Escrituras` / `Quitar Dívida`) oferece filtro rápido (`Todas | Hipotecáveis | Hipotecadas`) e ações de 1 clique (`Hipotecar`, `Desipotecar +10%`, `-Casa 50%`); se a soma máxima liquidável for insuficiente para cobrir a dívida (`saldo + patrimonio_liquidavel < 0`), a falência automática é decretada sem travar em cliques inúteis.
+- **Leilão de Escritura Própria:** Pela Carta do Lote, o dono pode colocar escritura livre de construções e sem hipoteca em leilão entre adversários (máximo 1 por turno), recebendo o valor arrematado.
+- **Desistência / Passar Vaga para `[BOT]`:** Humano local (com `>= 2` participantes ativos) ou cliente online pode passar sua vaga para `[BOT]` sem encerrar a mesa dos demais.
+- **Áudio Procedural & Controles:** `SoundManager` procedural via `AudioStreamWAV` com opções de Mudo, Volume e Sons de Passos/UI persistidas em `preferences.cfg`.

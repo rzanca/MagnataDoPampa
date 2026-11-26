@@ -15,6 +15,9 @@ signal trade_executed(target_id: int, offer_tile: int, request_tile: int, cash_d
 signal trade_offer_responded(offer_id: int, accepted: bool)
 signal auction_bid_submitted(bid_amount: int)
 signal auction_pass_submitted
+signal auction_owned_requested(tile_index: int)
+signal leave_to_bot_requested
+signal forfeit_match_requested
 signal menu_requested
 signal restart_match_requested
 signal camera_toggle_requested
@@ -123,6 +126,7 @@ var _deed_build_btn: Button
 var _deed_sell_btn: Button
 var _deed_mortgage_btn: Button
 var _deed_offer_trade_btn: Button
+var _deed_auction_btn: Button
 var _deed_trade_btn: Button
 var _deed_cart_btn: Button
 var _deed_open_tile_idx: int = -1
@@ -172,6 +176,8 @@ var _auction_min_next_val: int = 0
 
 var _pause_overlay: Control
 var _pause_restart_btn: Button
+var _pause_bot_leave_btn: Button
+var _pause_forfeit_btn: Button
 var _pause_menu_btn: Button
 var _help_overlay: Control
 
@@ -224,6 +230,12 @@ var _portfolio_monopoly_box: HFlowContainer
 var _portfolio_list_box: VBoxContainer
 var _portfolio_empty_label: Label
 var _portfolio_cart_btn: Button
+var _portfolio_debt_banner: PanelContainer
+var _portfolio_debt_label: Label
+var _portfolio_filter_btns: Dictionary[String, Button] = {}
+var _portfolio_filter: String = "all"
+var _portfolio_open_pid: int = -1
+var _portfolio_last_info: Dictionary = {}
 
 var _settings_overlay: Control
 var _settings_target_row: HBoxContainer
@@ -1365,6 +1377,18 @@ func _build_deed_modal() -> void:
 	)
 	_deed_actions_grid.add_child(_deed_offer_trade_btn)
 
+	_deed_auction_btn = Button.new()
+	_deed_auction_btn.text = "Leiloar Lote"
+	_deed_auction_btn.visible = false
+	_deed_auction_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_apply_button_theme(_deed_auction_btn, "#3C2D16", "#543F1F", "#2B2010", "#F5CA5C", Color("#FFF3C4"), false, deed_act_h, deed_act_fs, 8.0, true)
+	_deed_auction_btn.pressed.connect(func() -> void:
+		var auc_idx: int = _deed_open_tile_idx
+		if auc_idx >= 0:
+			auction_owned_requested.emit(auc_idx)
+	)
+	_deed_actions_grid.add_child(_deed_auction_btn)
+
 	_deed_trade_btn = Button.new()
 	_deed_trade_btn.text = "Propor Troca por Este Lote"
 	_deed_trade_btn.visible = false
@@ -1537,6 +1561,7 @@ func show_deed_modal(info: Dictionary) -> void:
 	var show_mortgage: bool = is_owner_active and (tile_type == "PROPERTY" or tile_type == "COMPANY")
 	var show_cart: bool = bool(info.get("can_open_build_cart", false))
 	var show_offer: bool = bool(info.get("can_offer_in_trade", false))
+	var show_auction: bool = bool(info.get("can_auction_owned", false))
 
 	if _deed_build_btn != null:
 		_deed_build_btn.visible = show_build
@@ -1554,8 +1579,10 @@ func show_deed_modal(info: Dictionary) -> void:
 		_deed_cart_btn.visible = show_cart
 	if _deed_offer_trade_btn != null:
 		_deed_offer_trade_btn.visible = show_offer
+	if _deed_auction_btn != null:
+		_deed_auction_btn.visible = show_auction
 	if _deed_actions_grid != null:
-		_deed_actions_grid.visible = show_build or show_sell or show_mortgage or show_cart or show_offer
+		_deed_actions_grid.visible = show_build or show_sell or show_mortgage or show_cart or show_offer or show_auction
 
 	if _deed_trade_btn != null:
 		_deed_trade_btn.visible = bool(info.get("can_propose_trade", false)) and _deed_trade_target_id >= 0 and _deed_trade_tile_idx >= 0
@@ -2226,6 +2253,8 @@ func refresh_auction_modal(auction_data: Dictionary, local_player_id: int, is_on
 	var min_open: int = int(auction_data.get("min_bid", 20))
 	var cur_bid: int = int(auction_data.get("current_bid", 0))
 	var high_name: String = str(auction_data.get("highest_bidder_name", ""))
+	var seller_id: int = int(auction_data.get("seller_id", -1))
+	var seller_name: String = str(auction_data.get("seller_name", ""))
 	var color_hex: String = str(auction_data.get("color_hex", "#2D5248"))
 
 	var ab_sb: StyleBoxFlat = StyleBoxFlat.new()
@@ -2234,7 +2263,8 @@ func refresh_auction_modal(auction_data: Dictionary, local_player_id: int, is_on
 	ab_sb.corner_radius_top_right = 16
 	_auction_banner.add_theme_stylebox_override("panel", ab_sb)
 	_auction_title_label.text = tile_name
-	_auction_meta_label.text = "Valor de tabela: %s • Lance mínimo inicial: %s" % [_format_brl(base_price), _format_brl(min_open)]
+	var seller_prefix: String = ("Vendedor: %s • " % seller_name) if (seller_id >= 0 and seller_name != "") else ""
+	_auction_meta_label.text = "%sTabela: %s • Lance mínimo inicial: %s" % [seller_prefix, _format_brl(base_price), _format_brl(min_open)]
 	_auction_bid_label.text = TradeAndAuctionHelper.format_auction_status(cur_bid, min_open, high_name)
 
 	_auction_min_next_val = min_open if cur_bid <= 0 else (cur_bid + 10)
@@ -2352,6 +2382,24 @@ func _build_pause_modal() -> void:
 	)
 	vbox.add_child(b_rules)
 
+	_pause_bot_leave_btn = Button.new()
+	_pause_bot_leave_btn.text = "Passar Vaga para [BOT]"
+	_apply_button_theme(_pause_bot_leave_btn, "#18364A", "#214A66", "#112736", "#4EA8DE", Color("#D8F3FF"), false, btn_h, btn_fs, 12.0, true)
+	_pause_bot_leave_btn.pressed.connect(func() -> void:
+		hide_pause_modal()
+		leave_to_bot_requested.emit()
+	)
+	vbox.add_child(_pause_bot_leave_btn)
+
+	_pause_forfeit_btn = Button.new()
+	_pause_forfeit_btn.text = "Declarar Desistência"
+	_apply_button_theme(_pause_forfeit_btn, "#4D2024", "#6B2C32", "#361619", "#FF758F", Color("#FFE4E4"), false, btn_h, btn_fs, 12.0, true)
+	_pause_forfeit_btn.pressed.connect(func() -> void:
+		hide_pause_modal()
+		forfeit_match_requested.emit()
+	)
+	vbox.add_child(_pause_forfeit_btn)
+
 	_pause_menu_btn = Button.new()
 	_pause_menu_btn.text = "Voltar à Tela Inicial"
 	_apply_button_theme(_pause_menu_btn, "#3A2322", "#50302E", "#291817", "#C46E5F", Color("#FFE4E4"), false, btn_h, btn_fs, 12.0, true)
@@ -2362,6 +2410,23 @@ func _build_pause_modal() -> void:
 	vbox.add_child(_pause_menu_btn)
 
 func show_pause_modal() -> void:
+	var active_count: int = 0
+	var local_human_active: bool = false
+	for p: Dictionary in _cached_players:
+		if not bool(p.get("bankrupt", false)):
+			active_count += 1
+			if not bool(p.get("is_bot", false)):
+				if not _net_is_online or int(p.get("id", -1)) == _net_local_player_id:
+					local_human_active = true
+	if _pause_bot_leave_btn != null:
+		var can_pass_to_bot: bool = local_human_active and (active_count >= 2) and (not (_net_is_online and _net_is_host))
+		_pause_bot_leave_btn.visible = can_pass_to_bot
+		if _net_is_online and not _net_is_host:
+			_pause_bot_leave_btn.text = "Passar Vaga para [BOT] e Sair"
+		else:
+			_pause_bot_leave_btn.text = "Passar Minha Vez para [BOT]"
+	if _pause_forfeit_btn != null:
+		_pause_forfeit_btn.visible = local_human_active and (active_count >= 2) and (not (_net_is_online and _net_is_host))
 	if _pause_overlay != null:
 		_pause_overlay.visible = true
 
@@ -3516,12 +3581,49 @@ func _build_portfolio_modal() -> void:
 	_portfolio_monopoly_wrap.add_child(_portfolio_monopoly_box)
 
 	var list_hdr: Label = Label.new()
-	list_hdr.text = "ESCRITURAS E CONSTRUÇÕES (TOQUE PARA DETALHES)"
+	list_hdr.text = "ESCRITURAS E HIPOTECAS (TOQUE PARA ABRIR A CARTA)"
 	if _bold_font != null:
 		list_hdr.add_theme_font_override("font", _bold_font)
 	list_hdr.add_theme_font_size_override("font_size", _fs(11.0))
 	list_hdr.add_theme_color_override("font_color", Color("#A7C2B2"))
 	body_vb.add_child(list_hdr)
+
+	_portfolio_debt_banner = PanelContainer.new()
+	_portfolio_debt_banner.visible = false
+	var db_sb: StyleBoxFlat = _make_panel_style("#3D1B1E", "#FF758F", 9, 1)
+	db_sb.content_margin_left = 10.0
+	db_sb.content_margin_right = 10.0
+	db_sb.content_margin_top = 6.0
+	db_sb.content_margin_bottom = 6.0
+	_portfolio_debt_banner.add_theme_stylebox_override("panel", db_sb)
+	body_vb.add_child(_portfolio_debt_banner)
+
+	_portfolio_debt_label = Label.new()
+	_portfolio_debt_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_portfolio_debt_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		_portfolio_debt_label.add_theme_font_override("font", _bold_font)
+	_portfolio_debt_label.add_theme_font_size_override("font_size", _fs(12.0))
+	_portfolio_debt_label.add_theme_color_override("font_color", Color("#FFD6DD"))
+	_portfolio_debt_banner.add_child(_portfolio_debt_label)
+
+	var filter_row: HBoxContainer = HBoxContainer.new()
+	filter_row.add_theme_constant_override("separation", 6)
+	body_vb.add_child(filter_row)
+	_portfolio_filter_btns.clear()
+	var filter_specs: Array[Array] = [
+		["all", "Todas"],
+		["mortgageable", "Hipotecáveis"],
+		["mortgaged", "Hipotecadas"]
+	]
+	for spec: Array in filter_specs:
+		var f_key: String = str(spec[0])
+		var f_btn: Button = Button.new()
+		f_btn.text = str(spec[1])
+		f_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		f_btn.pressed.connect(func() -> void: _set_portfolio_filter(f_key))
+		filter_row.add_child(f_btn)
+		_portfolio_filter_btns[f_key] = f_btn
 
 	_portfolio_scroll = ScrollContainer.new()
 	_portfolio_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3573,6 +3675,18 @@ func _build_portfolio_modal() -> void:
 func show_player_portfolio_modal(info: Dictionary) -> void:
 	if _portfolio_overlay == null:
 		return
+	_portfolio_last_info = info.duplicate(true)
+	_portfolio_open_pid = int(info.get("id", -1))
+	_render_portfolio_modal_contents()
+	_portfolio_overlay.visible = true
+
+func _set_portfolio_filter(filter_key: String) -> void:
+	_portfolio_filter = filter_key
+	if not _portfolio_last_info.is_empty():
+		_render_portfolio_modal_contents()
+
+func _render_portfolio_modal_contents() -> void:
+	var info: Dictionary = _portfolio_last_info
 	for ch: Node in _portfolio_monopoly_box.get_children():
 		ch.queue_free()
 	for ch: Node in _portfolio_list_box.get_children():
@@ -3585,6 +3699,8 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 	var in_jail: bool = bool(info.get("in_jail", false))
 	var jail_cards: int = int(info.get("jail_free_cards", 0))
 	var money: int = int(info.get("money", 0))
+	var max_liq: int = int(info.get("max_liquidatable", 0))
+	var can_manage_owner: bool = bool(info.get("can_manage_owner", false))
 	var pawn_id: String = str(info.get("pawn_id", "cuia"))
 	var pawn_name: String = str(info.get("pawn_name", ""))
 	var p_color: Color = info.get("color", Color("#2A9D8F"))
@@ -3623,6 +3739,32 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 	_portfolio_meta_label.text = " • ".join(summary_parts)
 	_portfolio_meta_label.add_theme_color_override("font_color", sub_col)
 
+	if _portfolio_debt_banner != null and _portfolio_debt_label != null:
+		var show_debt: bool = (not is_bankrupt) and (money < 0)
+		_portfolio_debt_banner.visible = show_debt
+		if show_debt:
+			_portfolio_debt_label.text = "DÍVIDA: -%s • Máximo liquidável em bens: %s (use os botões abaixo)" % [_format_brl(absi(money)), _format_brl(max_liq)]
+
+	var count_all: int = deeds.size()
+	var count_mortgaged: int = 0
+	var count_mortgageable: int = 0
+	for d_item: Variant in deeds:
+		if d_item is Dictionary:
+			var dd: Dictionary = d_item
+			if bool(dd.get("is_mortgaged", false)):
+				count_mortgaged += 1
+			else:
+				count_mortgageable += 1
+
+	if _portfolio_filter_btns.has("all"):
+		_portfolio_filter_btns["all"].text = "Todas (%d)" % count_all
+	if _portfolio_filter_btns.has("mortgageable"):
+		_portfolio_filter_btns["mortgageable"].text = "Hipotecáveis (%d)" % count_mortgageable
+	if _portfolio_filter_btns.has("mortgaged"):
+		_portfolio_filter_btns["mortgaged"].text = "Hipotecadas (%d)" % count_mortgaged
+	for f_key: String in _portfolio_filter_btns.keys():
+		_style_seg_btn(_portfolio_filter_btns[f_key], f_key == _portfolio_filter)
+
 	_portfolio_monopoly_wrap.visible = not monopolies.is_empty()
 	for m_entry: Variant in monopolies:
 		if not (m_entry is Dictionary):
@@ -3648,15 +3790,7 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 		badge.add_child(b_lbl)
 		_portfolio_monopoly_box.add_child(badge)
 
-	_portfolio_empty_label.visible = deeds.is_empty()
-	if _portfolio_cart_btn != null:
-		var can_cart_here: bool = (
-			not _cached_is_bot_turn
-			and info_pid >= 0
-			and info_pid == _cached_active_pid
-			and not monopolies.is_empty()
-		)
-		_portfolio_cart_btn.visible = can_cart_here
+	var shown_count: int = 0
 	for d_entry: Variant in deeds:
 		if not (d_entry is Dictionary):
 			continue
@@ -3669,6 +3803,12 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 		var is_mort: bool = bool(d.get("is_mortgaged", false))
 		var has_mono: bool = bool(d.get("has_monopoly", false))
 		var rent_txt: String = str(d.get("rent_text", ""))
+
+		if _portfolio_filter == "mortgaged" and not is_mort:
+			continue
+		if _portfolio_filter == "mortgageable" and is_mort:
+			continue
+		shown_count += 1
 
 		var row_card: PanelContainer = PanelContainer.new()
 		var rc_sb: StyleBoxFlat = _make_panel_style("#16231C" if not is_mort else "#23191B", "#F5CA5C" if has_mono else "#283D32", 10, 2 if has_mono else 1)
@@ -3690,11 +3830,16 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 		)
 		_portfolio_list_box.add_child(row_card)
 
+		var row_vb: VBoxContainer = VBoxContainer.new()
+		row_vb.add_theme_constant_override("separation", 6)
+		row_vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		row_card.add_child(row_vb)
+
 		var r_hb: HBoxContainer = HBoxContainer.new()
 		r_hb.add_theme_constant_override("separation", 10)
 		r_hb.alignment = BoxContainer.ALIGNMENT_CENTER
 		r_hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row_card.add_child(r_hb)
+		row_vb.add_child(r_hb)
 
 		var left_vb: VBoxContainer = VBoxContainer.new()
 		left_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -3741,7 +3886,46 @@ func show_player_portfolio_modal(info: Dictionary) -> void:
 		else:
 			status_hb.add_child(_make_status_pill("TERRENO" if str(d.get("tile_type", "")) == "PROPERTY" else "CIA", "#192620", "#355043", Color("#B5C9BD")))
 
-	_portfolio_overlay.visible = true
+		if can_manage_owner:
+			var can_sell: bool = bool(d.get("can_sell_building", false))
+			var can_mort: bool = bool(d.get("can_mortgage", false))
+			if can_sell or can_mort:
+				var q_row: HBoxContainer = HBoxContainer.new()
+				q_row.add_theme_constant_override("separation", 6)
+				row_vb.add_child(q_row)
+				var q_h: float = _bh(30.0)
+				var q_fs: int = _fs(11.5)
+				if can_sell:
+					var q_sell: Button = Button.new()
+					q_sell.text = str(d.get("sell_building_label", "-Casa"))
+					q_sell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					_apply_button_theme(q_sell, "#3D2724", "#553631", "#2B1B19", "#C46E5F", Color.WHITE, false, q_h, q_fs, 8.0, true)
+					q_sell.pressed.connect(func() -> void: sell_building_pressed.emit(tile_ref))
+					q_row.add_child(q_sell)
+				if can_mort:
+					var q_mort: Button = Button.new()
+					q_mort.text = str(d.get("mortgage_label", "Hipotecar"))
+					q_mort.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+					if is_mort:
+						_apply_button_theme(q_mort, "#1B4236", "#255949", "#132E26", "#52B788", Color("#E8FFF2"), false, q_h, q_fs, 8.0, true)
+					else:
+						_apply_button_theme(q_mort, "#2B323C", "#3B4553", "#1F242B", "#8FA3B8", Color.WHITE, false, q_h, q_fs, 8.0, true)
+					q_mort.pressed.connect(func() -> void: mortgage_pressed.emit(tile_ref))
+					q_row.add_child(q_mort)
+
+	_portfolio_empty_label.visible = (shown_count == 0)
+	if deeds.is_empty():
+		_portfolio_empty_label.text = "Este estanceiro ainda não possui escrituras."
+	elif shown_count == 0:
+		_portfolio_empty_label.text = "Nenhuma escritura corresponde ao filtro selecionado."
+	if _portfolio_cart_btn != null:
+		var can_cart_here: bool = (
+			not _cached_is_bot_turn
+			and info_pid >= 0
+			and info_pid == _cached_active_pid
+			and not monopolies.is_empty()
+		)
+		_portfolio_cart_btn.visible = can_cart_here
 
 func _make_status_pill(txt: String, bg_hex: String, border_hex: String, text_col: Color) -> PanelContainer:
 	var pill: PanelContainer = PanelContainer.new()
@@ -3763,8 +3947,14 @@ func _make_status_pill(txt: String, bg_hex: String, border_hex: String, text_col
 	return pill
 
 func hide_player_portfolio_modal() -> void:
+	_portfolio_open_pid = -1
 	if _portfolio_overlay != null:
 		_portfolio_overlay.visible = false
+
+func get_open_portfolio_player_id() -> int:
+	if _portfolio_overlay != null and _portfolio_overlay.visible:
+		return _portfolio_open_pid
+	return -1
 
 # 9. Modal de Carrinho de Obras (Construção/Venda Equilibrada em Lote nos Monopólios)
 func _build_construction_cart_modal() -> void:
@@ -4133,6 +4323,9 @@ func reset_hud_state() -> void:
 	_cart_draft_levels.clear()
 	_cart_focus_group = ""
 	_deed_open_tile_idx = -1
+	_portfolio_open_pid = -1
+	_portfolio_filter = "all"
+	_portfolio_last_info.clear()
 	_cached_houses_left = 32
 	_cached_hotels_left = 12
 	_cached_is_bot_turn = false

@@ -9,7 +9,7 @@ signal host_web_room_requested(signaling_url: String, player_name: String, turn_
 signal join_web_room_requested(signaling_url: String, room_code: String, player_name: String, turn_cfg: Dictionary)
 signal disconnect_network_requested
 signal lobby_config_changed
-signal lobby_slot_pref_requested(pawn_idx: int, color_idx: int)
+signal lobby_slot_pref_requested(pawn_idx: int, color_idx: int, player_name: String)
 
 const UIStyleTokens = preload("res://ui/shared/UIStyleTokens.gd")
 const PlatformProfileAdapter = preload("res://ui/shared/PlatformProfileAdapter.gd")
@@ -779,6 +779,12 @@ func _build_slot_card(slot_idx: int, f_scale: float, ctrl_h: float) -> PanelCont
 		name_edit.text = GENERIC_BOT_NAMES[slot_idx % GENERIC_BOT_NAMES.size()]
 	else:
 		name_edit.text = "Jogador 1"
+	name_edit.max_length = 20
+	name_edit.text_submitted.connect(func(_new_txt: String) -> void:
+		_on_slot_name_committed(slot_idx)
+		name_edit.release_focus()
+	)
+	name_edit.focus_exited.connect(func() -> void: _on_slot_name_committed(slot_idx))
 	row_a.add_child(name_edit)
 	_slot_name_edits.append(name_edit)
 
@@ -1071,6 +1077,31 @@ func _cycle_slot_pawn(slot_idx: int) -> void:
 		_on_slot_pawn_changed(slot_idx, candidate)
 		return
 
+func _sanitize_lobby_name(raw_name: String, fallback: String) -> String:
+	var clean: String = raw_name.strip_edges()
+	if clean == "":
+		return fallback
+	if clean.length() > 20:
+		clean = clean.substr(0, 20)
+	return clean
+
+func _on_slot_name_committed(slot_idx: int) -> void:
+	if _updating_slots or slot_idx < 0 or slot_idx >= _slot_name_edits.size():
+		return
+	var fallback: String = _pick_unused_generic_bot_name(slot_idx) if _slot_is_bot[slot_idx] else ("Jogador %d" % (slot_idx + 1))
+	var clean: String = _sanitize_lobby_name(_slot_name_edits[slot_idx].text, fallback)
+	_slot_name_edits[slot_idx].text = clean
+	if _net_mode == 2:
+		if not _can_edit_slot_choices(slot_idx):
+			return
+		lobby_slot_pref_requested.emit(_slot_pawn_indices[slot_idx], _slot_color_indices[slot_idx], clean)
+	elif _net_mode == 1:
+		if slot_idx == 0 and _p2p_name_edit != null:
+			_p2p_name_edit.text = clean
+		if slot_idx == 0 and _web_name_edit != null:
+			_web_name_edit.text = clean
+		lobby_config_changed.emit()
+
 func _on_slot_pawn_changed(slot_idx: int, new_pawn_idx: int) -> void:
 	if _updating_slots:
 		return
@@ -1086,7 +1117,8 @@ func _on_slot_pawn_changed(slot_idx: int, new_pawn_idx: int) -> void:
 		_refresh_slot_pawn_visual(slot_idx)
 		_refresh_exclusive_choices()
 		_updating_slots = false
-		lobby_slot_pref_requested.emit(clamped_p, _slot_color_indices[slot_idx])
+		var cur_n: String = _slot_name_edits[slot_idx].text.strip_edges() if slot_idx < _slot_name_edits.size() else ""
+		lobby_slot_pref_requested.emit(clamped_p, _slot_color_indices[slot_idx], cur_n)
 		return
 
 	if _net_mode == 1 and _is_pawn_taken_by_other_active(slot_idx, clamped_p):
@@ -1125,7 +1157,8 @@ func _on_slot_color_changed(slot_idx: int, new_color_idx: int) -> void:
 		_refresh_slot_color_visuals(slot_idx)
 		_refresh_exclusive_choices()
 		_updating_slots = false
-		lobby_slot_pref_requested.emit(_slot_pawn_indices[slot_idx], clamped_c)
+		var cur_nc: String = _slot_name_edits[slot_idx].text.strip_edges() if slot_idx < _slot_name_edits.size() else ""
+		lobby_slot_pref_requested.emit(_slot_pawn_indices[slot_idx], clamped_c, cur_nc)
 		return
 
 	if _net_mode == 1 and _is_color_taken_by_other_active(slot_idx, clamped_c):
@@ -1148,7 +1181,7 @@ func _on_slot_color_changed(slot_idx: int, new_color_idx: int) -> void:
 	if _net_mode == 1:
 		lobby_config_changed.emit()
 
-func apply_remote_peer_selection(sender_peer_id: int, pawn_idx: int, color_idx: int) -> bool:
+func apply_remote_peer_selection(sender_peer_id: int, pawn_idx: int, color_idx: int, player_name: String = "") -> bool:
 	if _net_mode != 1:
 		return false
 	var target_slot: int = -1
@@ -1172,6 +1205,13 @@ func apply_remote_peer_selection(sender_peer_id: int, pawn_idx: int, color_idx: 
 		_assign_unique_slot_value(_slot_color_indices, target_slot, safe_c)
 		_refresh_slot_color_visuals(target_slot)
 		changed = true
+	var clean_name: String = player_name.strip_edges()
+	if clean_name != "":
+		if clean_name.length() > 20:
+			clean_name = clean_name.substr(0, 20)
+		if target_slot < _slot_name_edits.size() and _slot_name_edits[target_slot].text != clean_name:
+			_slot_name_edits[target_slot].text = clean_name
+			changed = true
 	_refresh_exclusive_choices()
 	_updating_slots = false
 	return changed
@@ -1468,7 +1508,8 @@ func _sync_host_slots_with_peers() -> void:
 			_slot_peer_ids[i] = int(pd.get("peer_id", 1))
 			if i < _slot_peer_statuses.size():
 				_slot_peer_statuses[i] = str(pd.get("status", "connected"))
-			_slot_name_edits[i].text = str(pd.get("name", "Jogador %d" % (i + 1)))
+			if not _slot_name_edits[i].has_focus():
+				_slot_name_edits[i].text = str(pd.get("name", "Jogador %d" % (i + 1)))
 			_slot_name_edits[i].editable = (i == 0)
 		else:
 			_slot_is_bot[i] = true
@@ -1541,8 +1582,10 @@ func apply_remote_lobby_snapshot(lobby_data: Dictionary, local_peer_id: int) -> 
 			_slot_peer_ids[i] = int(sd.get("peer_id", 0))
 			if i < _slot_peer_statuses.size():
 				_slot_peer_statuses[i] = str(sd.get("status", "connected"))
-			_slot_name_edits[i].text = str(sd.get("name", "Estanceiro"))
-			_slot_name_edits[i].editable = false
+			var is_my_client_slot: bool = (not _slot_is_bot[i]) and (_slot_peer_ids[i] == _local_peer_id)
+			if not _slot_name_edits[i].has_focus():
+				_slot_name_edits[i].text = str(sd.get("name", "Estanceiro"))
+			_slot_name_edits[i].editable = is_my_client_slot
 			var p_idx: int = clampi(int(sd.get("pawn_idx", i)), 0, PAWN_OPTIONS.size() - 1)
 			var c_idx: int = clampi(int(sd.get("color_idx", i)), 0, COLOR_OPTIONS.size() - 1)
 			_slot_pawn_indices[i] = p_idx
