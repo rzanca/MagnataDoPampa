@@ -1737,7 +1737,7 @@ func _advance_round_if_complete(finished_player_id: int) -> void:
 		if next_s != _current_season_index:
 			_current_season_index = next_s
 			var s_info: Dictionary = get_current_season_info()
-			_play_sfx("festival")
+			_play_sfx("season_change")
 			_log_both("Mudança de Estação! Chegou %s: %s" % [str(s_info.get("label", "")), str(s_info.get("effect_desc", ""))])
 			_broadcast_toast_event("Estação: %s!" % str(s_info.get("label", "")), str(s_info.get("effect_desc", "")), "chance")
 	var auction_interval: int = int(_preferences.get("auction_interval_rounds", 3))

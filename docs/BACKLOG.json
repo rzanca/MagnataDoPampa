@@ -118,14 +118,14 @@
       "id": "LOTE-13",
       "title": "Áudio Temático Gaúcho multi-harmônico em SoundManager.gd",
       "owner_agent": "02_engenheiro_core.md",
-      "status": "in_progress",
+      "status": "done",
       "notes": "Substituir tons simples por acordes de acordeon/fandango, violão dedilhado, trote de casco, dados na madeira, moedas de Pilas e alertas sazonais."
     },
     {
       "id": "LOTE-14",
       "title": "Câmera Pan + Zoom, foco bem próximo no peão e Popups Arrastáveis",
       "owner_agent": "03_engenheiro_ui_hibrida.md",
-      "status": "pending",
+      "status": "in_progress",
       "notes": "Adicionar pan e zoom na câmera 3D/2D em Board3D.gd, zoom aproximado durante salto do peão e cabeçalho arrastável com clamp nos modais de GameHUD.gd."
     },
     {
