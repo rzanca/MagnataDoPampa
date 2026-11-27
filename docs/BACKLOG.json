@@ -204,6 +204,13 @@
       "owner_agent": "02_engenheiro_core.md",
       "status": "done",
       "notes": "Substitui zumbido/ruído branco do loop ambiente por dedilhado acústico pampeano 8s com crossfade de borda sem clique e pausa automática em background; corrige avanço/fim de turno na falência após escapar do Xadrez com dupla, consciência de monopólio aliado no BotAI (desipotecar/liquidar), separação entre toque e arrasto/pinça no Board3D, quebra de linha da barra rápida mobile no GameHUD e parada do áudio ambiente ao fim da partida (v0.11.1)."
+    },
+    {
+      "id": "LOTE-26",
+      "title": "Correção da Conexão Multiplayer Web (WebSocket Room Relay WSS no Render + NetworkManager)",
+      "owner_agent": "02_engenheiro_core.md",
+      "status": "done",
+      "notes": "Resolve travamento silencioso em 'Entrando na sala...' causado pela ausência da extensão webrtc-native no Desktop/Android; adiciona WebSocket Room Relay em estrela com heartbeat 25s e suporte a frames fragmentados em tools/signaling_server/server.mjs e transporte WebSocket Relay nativo com serialização binária fiel em core/NetworkManager.gd (v0.11.2)."
     }
   ]
 }

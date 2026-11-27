@@ -17,7 +17,10 @@ const HOST = process.env.HOST || "0.0.0.0";
 const MAX_CLIENTS_LIMIT = 5;
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sem 0/O/1/I para fácil leitura
+const HEARTBEAT_INTERVAL_MS = 25000;
 
+/** @type {Set<WsClient>} */
+const activeClients = new Set();
 /** @type {Map<string, { code: string, host: WsClient, hostName: string, maxClients: number, nextPeerId: number, clients: Map<number, { ws: WsClient, name: string }> }>} */
 const rooms = new Map();
 
@@ -57,15 +60,27 @@ class WsClient {
   constructor(socket) {
     this.socket = socket;
     this.buffer = Buffer.alloc(0);
+    this.fragments = [];
+    this.fragmentOpcode = 0;
     this.closed = false;
     this.roomCode = "";
     this.peerId = 0;
     this.isHost = false;
     this.name = "Estanceiro";
+    activeClients.add(this);
 
     socket.on("data", (chunk) => this._onData(chunk));
     socket.on("close", () => this._handleClose());
     socket.on("error", () => this._handleClose());
+  }
+
+  sendPing() {
+    if (this.closed || this.socket.destroyed) return;
+    try {
+      this.socket.write(encodeWsFrame(Buffer.alloc(0), 0x9));
+    } catch {
+      this._handleClose();
+    }
   }
 
   sendJson(obj) {
@@ -94,6 +109,7 @@ class WsClient {
     while (this.buffer.length >= 2) {
       const b0 = this.buffer[0];
       const b1 = this.buffer[1];
+      const fin = (b0 & 0x80) !== 0;
       const opcode = b0 & 0x0f;
       const masked = (b1 & 0x80) !== 0;
       let payloadLen = b1 & 0x7f;
@@ -107,6 +123,11 @@ class WsClient {
         if (this.buffer.length < 10) return;
         payloadLen = Number(this.buffer.readBigUInt64BE(2));
         offset = 10;
+      }
+
+      if (payloadLen > 4 * 1024 * 1024) {
+        this._handleClose();
+        return;
       }
 
       const maskLen = masked ? 4 : 0;
@@ -136,8 +157,33 @@ class WsClient {
         }
         continue;
       }
-      if (opcode === 0x1) {
-        this._handleText(payload.toString("utf8"));
+      if (opcode === 0xa) {
+        continue;
+      }
+      if (opcode === 0x1 || opcode === 0x2) {
+        if (fin) {
+          this.fragments = [];
+          this.fragmentOpcode = 0;
+          if (opcode === 0x1) {
+            this._handleText(payload.toString("utf8"));
+          }
+        } else {
+          this.fragmentOpcode = opcode;
+          this.fragments = [payload];
+        }
+        continue;
+      }
+      if (opcode === 0x0 && this.fragments.length > 0) {
+        this.fragments.push(payload);
+        if (fin) {
+          const combined = Buffer.concat(this.fragments);
+          const fOp = this.fragmentOpcode;
+          this.fragments = [];
+          this.fragmentOpcode = 0;
+          if (fOp === 0x1) {
+            this._handleText(combined.toString("utf8"));
+          }
+        }
       }
     }
   }
@@ -156,6 +202,7 @@ class WsClient {
   _handleClose() {
     if (this.closed) return;
     this.closed = true;
+    activeClients.delete(this);
     handleClientDisconnect(this);
   }
 }
@@ -181,7 +228,7 @@ function handleSignalingMessage(client, msg) {
       clients: new Map()
     });
     console.log(`[SALA +] ${code} criada por ${hostName} (até ${maxClients + 1} estanceiros)`);
-    client.sendJson({ type: "room_created", room_code: code, peer_id: 1 });
+    client.sendJson({ type: "room_created", room_code: code, peer_id: 1, relay_supported: true });
     return;
   }
 
@@ -210,13 +257,45 @@ function handleSignalingMessage(client, msg) {
       type: "room_joined",
       room_code: code,
       peer_id: peerId,
-      host_name: room.hostName
+      host_name: room.hostName,
+      relay_supported: true
     });
     room.host.sendJson({
       type: "peer_joined",
       peer_id: peerId,
-      name: guestName
+      name: guestName,
+      relay_supported: true
     });
+    return;
+  }
+
+  // Relay direto de estado/ações da partida em topologia estrela (Host 1 <-> Clientes 2..6)
+  if (type === "relay") {
+    const room = rooms.get(client.roomCode);
+    if (!room) return;
+    const relayed = {
+      type: "relay",
+      from_id: client.peerId,
+      kind: String(msg.kind || ""),
+      session_id: Number(msg.session_id || 0),
+      b64: String(msg.b64 || ""),
+      name: String(msg.name || ""),
+      pawn_idx: msg.pawn_idx === undefined ? -1 : Number(msg.pawn_idx),
+      color_idx: msg.color_idx === undefined ? -1 : Number(msg.color_idx)
+    };
+    if (!client.isHost) {
+      room.host.sendJson(relayed);
+      return;
+    }
+    const targetId = Number(msg.target_id || 0);
+    if (targetId >= 2) {
+      const entry = room.clients.get(targetId);
+      if (entry) entry.ws.sendJson(relayed);
+      return;
+    }
+    for (const entry of room.clients.values()) {
+      entry.ws.sendJson(relayed);
+    }
     return;
   }
 
@@ -264,12 +343,27 @@ function handleClientDisconnect(client) {
 const server = http.createServer((req, res) => {
   if (req.url === "/health") {
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-    res.end(JSON.stringify({ ok: true, service: "magnata-do-pampa-signaling", active_rooms: rooms.size }));
+    res.end(JSON.stringify({
+      ok: true,
+      service: "magnata-do-pampa-signaling",
+      active_rooms: rooms.size,
+      active_clients: activeClients.size,
+      relay: true
+    }));
     return;
   }
   res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("Magnata do Pampa WebRTC Signaling Server (WebSocket)\n");
+  res.end("Magnata do Pampa Web Multiplayer Signaling & Relay Server (WebSocket)\n");
 });
+
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
+
+setInterval(() => {
+  for (const client of activeClients) {
+    client.sendPing();
+  }
+}, HEARTBEAT_INTERVAL_MS).unref();
 
 server.on("upgrade", (req, socket) => {
   const key = req.headers["sec-websocket-key"];

@@ -6,7 +6,7 @@ enum TransportMode { NONE, ENET, WEBRTC }
 const DEFAULT_PORT: int = 7777
 const MAX_CLIENTS: int = 5 # Host (peer 1) + até 5 clientes remotos = 6 jogadores máx.
 const DEFAULT_SIGNALING_URL: String = "wss://magnata-do-pampa-signaling.onrender.com"
-const SIGNALING_CONNECT_TIMEOUT_SEC: float = 45.0
+const SIGNALING_CONNECT_TIMEOUT_SEC: float = 55.0
 
 const DEFAULT_STUN_SERVERS: Array[String] = [
 	"stun:stun.l.google.com:19302",
@@ -52,6 +52,7 @@ var _ws_opened: bool = false
 var _ws_connect_elapsed: float = 0.0
 var _ws_pending_role: String = "" # "host" ou "client"
 var _ws_pending_room_code: String = ""
+var _ws_relay_mode: bool = false
 var _webrtc_local_peer_id: int = 1
 var _webrtc_data_connected: bool = false
 
@@ -265,27 +266,22 @@ func host_web_room(signaling_url: String, host_name: String, turn_cfg: Dictionar
 		connection_failed_error.emit("URL de sinalização inválida. Use ws:// ou wss:// (ex.: %s)." % DEFAULT_SIGNALING_URL)
 		return ERR_INVALID_PARAMETER
 
-	# Criar WebRTCMultiplayerPeer em modo Host (peer 1, estrela até 5 clientes)
-	var rtc_server: WebRTCMultiplayerPeer = WebRTCMultiplayerPeer.new()
-	var rtc_err: Error = rtc_server.create_server()
-	if rtc_err != OK:
-		connection_failed_error.emit("Não foi possível inicializar WebRTC Host (código %d)." % int(rtc_err))
-		return rtc_err
-
 	var ws: WebSocketPeer = WebSocketPeer.new()
+	ws.inbound_buffer_size = 1048576
+	ws.outbound_buffer_size = 1048576
+	ws.max_queued_packets = 2048
 	var ws_err: Error = ws.connect_to_url(clean_ws_url)
 	if ws_err != OK:
-		rtc_server.close()
 		connection_failed_error.emit("Servidor de sinalização inacessível (%s). Verifique se o servidor WebSocket está online ou use Modo Local / ENet LAN." % clean_ws_url)
 		return ws_err
 
-	_rtc_peer = rtc_server
-	multiplayer.multiplayer_peer = _rtc_peer
+	_rtc_peer = null
 	_ws = ws
 	_ws_opened = false
 	_ws_connect_elapsed = 0.0
 	_ws_pending_role = "host"
 	_ws_pending_room_code = ""
+	_ws_relay_mode = false
 	_webrtc_local_peer_id = 1
 	_webrtc_data_connected = true
 
@@ -307,8 +303,7 @@ func host_web_room(signaling_url: String, host_name: String, turn_cfg: Dictionar
 	_peer_order.append(1)
 
 	web_room_code_changed.emit("")
-	var ice_tag: String = "STUN+TURN" if has_turn_configured() else "STUN"
-	network_status_changed.emit(int(net_mode), "WebRTC (%s) • Conectando à sinalização %s (pode levar ~30s se o Render estiver acordando)..." % [ice_tag, clean_ws_url], get_connected_peers_list())
+	network_status_changed.emit(int(net_mode), "Web • Conectando ao servidor %s (pode levar ~30s se o Render estiver acordando)..." % clean_ws_url, get_connected_peers_list())
 	return OK
 
 func join_web_room(signaling_url: String, room_code: String, client_name: String, turn_cfg: Dictionary = {}) -> Error:
@@ -335,6 +330,9 @@ func join_web_room(signaling_url: String, room_code: String, client_name: String
 		return ERR_INVALID_PARAMETER
 
 	var ws: WebSocketPeer = WebSocketPeer.new()
+	ws.inbound_buffer_size = 1048576
+	ws.outbound_buffer_size = 1048576
+	ws.max_queued_packets = 2048
 	var ws_err: Error = ws.connect_to_url(clean_ws_url)
 	if ws_err != OK:
 		connection_failed_error.emit("Servidor de sinalização inacessível (%s). Verifique se o servidor WebSocket está online ou use Modo Local / ENet LAN." % clean_ws_url)
@@ -345,6 +343,7 @@ func join_web_room(signaling_url: String, room_code: String, client_name: String
 	_ws_connect_elapsed = 0.0
 	_ws_pending_role = "client"
 	_ws_pending_room_code = clean_code
+	_ws_relay_mode = false
 	_webrtc_local_peer_id = 0
 	_webrtc_data_connected = false
 
@@ -358,8 +357,7 @@ func join_web_room(signaling_url: String, room_code: String, client_name: String
 	_peer_order.clear()
 
 	web_room_code_changed.emit(clean_code)
-	var ice_tag: String = "STUN+TURN" if has_turn_configured() else "STUN"
-	network_status_changed.emit(int(net_mode), "WebRTC (%s) • Entrando na sala %s via %s..." % [ice_tag, clean_code, clean_ws_url], get_connected_peers_list())
+	network_status_changed.emit(int(net_mode), "Web • Entrando na sala %s via %s..." % [clean_code, clean_ws_url], get_connected_peers_list())
 	return OK
 
 func _normalize_signaling_url(raw_url: String) -> String:
@@ -445,15 +443,19 @@ func _poll_signaling_socket(delta: float) -> void:
 
 	if state == WebSocketPeer.STATE_CLOSED:
 		var was_opened: bool = _ws_opened
+		var was_relay: bool = _ws_relay_mode
 		var failed_url: String = current_signaling_url
 		_ws = null
 		_ws_opened = false
 		if not was_opened:
 			disconnect_network("Sinalização inacessível.")
-			connection_failed_error.emit("Não foi possível conectar à sinalização (%s). Confira se o servidor WebSocket está ativo ou use Modo Local / ENet LAN." % failed_url)
+			connection_failed_error.emit("Não foi possível conectar ao servidor Web (%s). Verifique se o servidor está ativo ou use Modo Local / ENet LAN." % failed_url)
+		elif is_client() and was_relay:
+			disconnect_network("Conexão com o servidor Web da sala encerrada.")
+			host_disconnected.emit("A conexão com a sala no servidor Web foi encerrada.")
 		elif is_client() and not _webrtc_data_connected:
 			disconnect_network("Conexão de sinalização encerrada antes do enlace P2P.")
-			connection_failed_error.emit("Sinalização encerrada antes de concluir a conexão WebRTC com o Host.")
+			connection_failed_error.emit("Sinalização encerrada antes de concluir a conexão com o Host.")
 		elif is_host() and current_room_code == "":
 			disconnect_network("Sinalização encerrada antes de criar a sala.")
 			connection_failed_error.emit("Sinalização encerrada antes de gerar o Código da Sala.")
@@ -474,6 +476,12 @@ func _handle_signaling_message(raw_text: String) -> void:
 		"room_created":
 			if not is_host() or transport_mode != TransportMode.WEBRTC:
 				return
+			_ws_relay_mode = bool(msg.get("relay_supported", false))
+			if not _ws_relay_mode and _rtc_peer == null:
+				var rtc_server: WebRTCMultiplayerPeer = WebRTCMultiplayerPeer.new()
+				if rtc_server.create_server() == OK:
+					_rtc_peer = rtc_server
+					multiplayer.multiplayer_peer = _rtc_peer
 			current_room_code = str(msg.get("room_code", "")).strip_edges().to_upper()
 			web_room_code_changed.emit(current_room_code)
 			_emit_host_status()
@@ -490,6 +498,25 @@ func _handle_signaling_message(raw_text: String) -> void:
 			_webrtc_local_peer_id = assigned_id
 			web_room_code_changed.emit(current_room_code)
 
+			if bool(msg.get("relay_supported", false)):
+				_ws_relay_mode = true
+				_webrtc_data_connected = true
+				_rtc_peer = null
+				if multiplayer != null and multiplayer.multiplayer_peer != null:
+					multiplayer.multiplayer_peer = null
+				network_status_changed.emit(
+					int(net_mode),
+					"Web (Relay WSS) • Conectado à sala %s! Sincronizando lobby..." % current_room_code,
+					get_connected_peers_list()
+				)
+				_send_ws_json({
+					"type": "relay",
+					"target_id": 1,
+					"kind": "register_peer",
+					"name": local_player_name
+				})
+				return
+
 			var rtc_client: WebRTCMultiplayerPeer = WebRTCMultiplayerPeer.new()
 			var c_err: Error = rtc_client.create_client(assigned_id)
 			if c_err != OK:
@@ -503,6 +530,8 @@ func _handle_signaling_message(raw_text: String) -> void:
 			# Topologia estrela: cliente cria ligação direta APENAS com o Host (peer 1)
 			var link_err: Error = _create_webrtc_link(1, false)
 			if link_err != OK:
+				disconnect_network("WebRTC nativo indisponível.")
+				connection_failed_error.emit("WebRTC P2P não disponível neste dispositivo (código %d). Atualize o servidor para Relay WSS ou jogue via P2P LAN (ENet)." % int(link_err))
 				return
 
 			network_status_changed.emit(
@@ -533,6 +562,11 @@ func _handle_signaling_message(raw_text: String) -> void:
 			}
 			_emit_host_status()
 
+			if bool(msg.get("relay_supported", false)) or _ws_relay_mode:
+				_ws_relay_mode = true
+				_webrtc_data_connected = true
+				return
+
 			# Topologia estrela: Host (peer 1) cria ligação direta e oferta SDP para o novo cliente
 			var link_err: Error = _create_webrtc_link(remote_id, true)
 			if link_err != OK:
@@ -546,18 +580,25 @@ func _handle_signaling_message(raw_text: String) -> void:
 			var left_id: int = int(msg.get("peer_id", 0))
 			if left_id >= 2 and _room_peers.has(left_id):
 				var p_info: Dictionary = _room_peers[left_id]
-				# Se ainda estava em handshake (nunca concluiu DataChannel), remove do lobby
-				if str(p_info.get("status", "")) == "connecting":
+				var left_name: String = str(p_info.get("name", "Jogador"))
+				var was_connecting: bool = (str(p_info.get("status", "")) == "connecting")
+				if _ws_relay_mode or was_connecting:
 					_close_webrtc_link(left_id)
 					_room_peers.erase(left_id)
 					_peer_order.erase(left_id)
 					_emit_host_status()
+					if not was_connecting and _ws_relay_mode:
+						peer_left_room.emit(left_id, left_name)
 
 		"host_left":
-			if is_client() and transport_mode == TransportMode.WEBRTC and not _webrtc_data_connected:
+			if is_client() and transport_mode == TransportMode.WEBRTC and (_ws_relay_mode or not _webrtc_data_connected):
 				var reason_str: String = str(msg.get("reason", "O Host encerrou a sala."))
 				disconnect_network(reason_str)
 				host_disconnected.emit(reason_str)
+
+		"relay":
+			if transport_mode == TransportMode.WEBRTC:
+				_handle_relay_message(msg)
 
 		"offer":
 			var from_id: int = int(msg.get("from_id", 1))
@@ -687,6 +728,7 @@ func disconnect_network(reason: String = "") -> void:
 	_ws_connect_elapsed = 0.0
 	_ws_pending_role = ""
 	_ws_pending_room_code = ""
+	_ws_relay_mode = false
 	_webrtc_local_peer_id = 1
 	_webrtc_data_connected = false
 
@@ -732,17 +774,86 @@ func _next_session_id() -> int:
 		candidate += 1
 	return candidate
 
-# --- Broadcasts do Host Autoritativo (Agnóstico de Transporte: ENet ou WebRTC) ---
+# --- Broadcasts do Host Autoritativo (ENet LAN ou Web Relay WSS / WebRTC) ---
+
+func _encode_relay_var(data: Variant) -> String:
+	var raw: PackedByteArray = var_to_bytes(data)
+	return Marshalls.raw_to_base64(raw)
+
+func _decode_relay_var(b64_str: String) -> Variant:
+	if b64_str == "":
+		return null
+	var raw: PackedByteArray = Marshalls.base64_to_raw(b64_str)
+	if raw.is_empty():
+		return null
+	return bytes_to_var(raw)
+
+func _has_connected_remote_peers() -> bool:
+	for pid: int in _peer_order:
+		if pid >= 2 and _room_peers.has(pid):
+			var info: Dictionary = _room_peers[pid]
+			if str(info.get("status", "connected")) == "connected":
+				return true
+	return false
+
+func _handle_relay_message(msg: Dictionary) -> void:
+	var from_id: int = int(msg.get("from_id", 0))
+	var kind: String = str(msg.get("kind", ""))
+	var session_id: int = int(msg.get("session_id", 0))
+	var b64_str: String = str(msg.get("b64", ""))
+
+	if is_host():
+		if from_id < 2:
+			return
+		match kind:
+			"register_peer":
+				_apply_registered_peer(from_id, str(msg.get("name", "")))
+			"lobby_pref":
+				_apply_lobby_pref(from_id, int(msg.get("pawn_idx", -1)), int(msg.get("color_idx", -1)), str(msg.get("name", "")))
+			"request_action":
+				var decoded: Variant = _decode_relay_var(b64_str)
+				if decoded is Dictionary:
+					var act_dict: Dictionary = decoded
+					_apply_request_action(from_id, session_id, str(act_dict.get("action_name", "")), act_dict.get("params", {}) as Dictionary)
+	elif is_client():
+		if from_id != 1:
+			return
+		match kind:
+			"sync_lobby":
+				var decoded_lobby: Variant = _decode_relay_var(b64_str)
+				if decoded_lobby is Dictionary:
+					_apply_sync_lobby(session_id, decoded_lobby as Dictionary)
+			"match_started":
+				var decoded_start: Variant = _decode_relay_var(b64_str)
+				if decoded_start is Dictionary:
+					_apply_match_started(session_id, decoded_start as Dictionary)
+			"state_snapshot":
+				var decoded_snap: Variant = _decode_relay_var(b64_str)
+				if decoded_snap is Dictionary:
+					_apply_state_snapshot(session_id, decoded_snap as Dictionary)
+			"match_event":
+				var decoded_ev: Variant = _decode_relay_var(b64_str)
+				if decoded_ev is Dictionary:
+					var ev_dict: Dictionary = decoded_ev
+					_apply_match_event(session_id, str(ev_dict.get("event_type", "")), ev_dict.get("payload", {}) as Dictionary)
 
 func _can_send_host_rpc() -> bool:
-	if not is_host() or multiplayer == null or not multiplayer.has_multiplayer_peer():
+	if not is_host():
+		return false
+	if transport_mode == TransportMode.WEBRTC and _ws_relay_mode:
+		return _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN and _has_connected_remote_peers()
+	if multiplayer == null or not multiplayer.has_multiplayer_peer():
 		return false
 	if multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
 		return false
 	return not multiplayer.get_peers().is_empty()
 
 func _can_send_client_rpc() -> bool:
-	if not is_client() or active_session_id <= 0 or multiplayer == null or not multiplayer.has_multiplayer_peer():
+	if not is_client() or active_session_id <= 0:
+		return false
+	if transport_mode == TransportMode.WEBRTC and _ws_relay_mode:
+		return _webrtc_data_connected and _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN
+	if multiplayer == null or not multiplayer.has_multiplayer_peer():
 		return false
 	return multiplayer.multiplayer_peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED
 
@@ -757,40 +868,108 @@ func broadcast_lobby_state(lobby_data: Dictionary) -> void:
 	payload["transport"] = int(transport_mode)
 	lobby_synced.emit(payload)
 	if _can_send_host_rpc():
-		_rpc_sync_lobby.rpc(active_session_id, payload)
+		if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+			_send_ws_json({
+				"type": "relay",
+				"target_id": 0,
+				"kind": "sync_lobby",
+				"session_id": active_session_id,
+				"b64": _encode_relay_var(payload)
+			})
+		else:
+			_rpc_sync_lobby.rpc(active_session_id, payload)
 
 func broadcast_match_started(session_id: int, snapshot: Dictionary) -> void:
 	if not is_host():
 		return
 	active_session_id = session_id
 	if _can_send_host_rpc():
-		_rpc_match_started.rpc(session_id, snapshot)
+		if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+			_send_ws_json({
+				"type": "relay",
+				"target_id": 0,
+				"kind": "match_started",
+				"session_id": session_id,
+				"b64": _encode_relay_var(snapshot)
+			})
+		else:
+			_rpc_match_started.rpc(session_id, snapshot)
 
 func broadcast_state_snapshot(session_id: int, snapshot: Dictionary) -> void:
 	if not is_host():
 		return
 	if _can_send_host_rpc():
-		_rpc_state_snapshot.rpc(session_id, snapshot)
+		if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+			_send_ws_json({
+				"type": "relay",
+				"target_id": 0,
+				"kind": "state_snapshot",
+				"session_id": session_id,
+				"b64": _encode_relay_var(snapshot)
+			})
+		else:
+			_rpc_state_snapshot.rpc(session_id, snapshot)
 
 func broadcast_match_event(session_id: int, event_type: String, payload: Dictionary) -> void:
 	if not is_host():
 		return
 	if _can_send_host_rpc():
-		_rpc_match_event.rpc(session_id, event_type, payload)
+		if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+			_send_ws_json({
+				"type": "relay",
+				"target_id": 0,
+				"kind": "match_event",
+				"session_id": session_id,
+				"b64": _encode_relay_var({"event_type": event_type, "payload": payload})
+			})
+		else:
+			_rpc_match_event.rpc(session_id, event_type, payload)
 
 func send_match_event_to_peer(target_peer_id: int, session_id: int, event_type: String, payload: Dictionary) -> void:
 	if not is_host() or target_peer_id <= 1:
 		return
-	if _can_send_host_rpc() and (target_peer_id in multiplayer.get_peers()):
-		_rpc_match_event.rpc_id(target_peer_id, session_id, event_type, payload)
+	if _can_send_host_rpc():
+		if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+			if _room_peers.has(target_peer_id):
+				_send_ws_json({
+					"type": "relay",
+					"target_id": target_peer_id,
+					"kind": "match_event",
+					"session_id": session_id,
+					"b64": _encode_relay_var({"event_type": event_type, "payload": payload})
+				})
+		elif target_peer_id in multiplayer.get_peers():
+			_rpc_match_event.rpc_id(target_peer_id, session_id, event_type, payload)
 
 func send_action_to_host(action_name: String, params: Dictionary = {}) -> void:
 	if not _can_send_client_rpc():
 		return
-	_rpc_request_action.rpc_id(1, active_session_id, action_name, params)
+	if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+		_send_ws_json({
+			"type": "relay",
+			"target_id": 1,
+			"kind": "request_action",
+			"session_id": active_session_id,
+			"b64": _encode_relay_var({"action_name": action_name, "params": params})
+		})
+	else:
+		_rpc_request_action.rpc_id(1, active_session_id, action_name, params)
 
 func send_lobby_pref_to_host(pawn_idx: int, color_idx: int, player_name: String = "") -> void:
-	if not is_client() or multiplayer == null or not multiplayer.has_multiplayer_peer():
+	if not is_client():
+		return
+	if _ws_relay_mode and transport_mode == TransportMode.WEBRTC:
+		if _webrtc_data_connected and _ws != null and _ws.get_ready_state() == WebSocketPeer.STATE_OPEN:
+			_send_ws_json({
+				"type": "relay",
+				"target_id": 1,
+				"kind": "lobby_pref",
+				"pawn_idx": pawn_idx,
+				"color_idx": color_idx,
+				"name": player_name
+			})
+		return
+	if multiplayer == null or not multiplayer.has_multiplayer_peer():
 		return
 	if multiplayer.multiplayer_peer.get_connection_status() != MultiplayerPeer.CONNECTION_CONNECTED:
 		return
@@ -871,23 +1050,19 @@ func _emit_host_status() -> void:
 				connected_count += 1
 	var msg: String = ""
 	if transport_mode == TransportMode.WEBRTC:
-		var ice_tag: String = "STUN+TURN" if has_turn_configured() else "STUN"
+		var mode_tag: String = "Web (Relay WSS)" if _ws_relay_mode else ("WebRTC (%s)" % ("STUN+TURN" if has_turn_configured() else "STUN"))
 		var code_str: String = current_room_code if current_room_code != "" else "..."
 		var pending_txt: String = " (+%d conectando)" % connecting_count if connecting_count > 0 else ""
-		msg = "WebRTC (%s) • Sala: %s • %d/6 conectados%s" % [ice_tag, code_str, connected_count, pending_txt]
+		msg = "%s • Sala: %s • %d/6 conectados%s" % [mode_tag, code_str, connected_count, pending_txt]
 	else:
 		var suffix: String = "estanceiro conectado" if connected_count == 1 else "estanceiros conectados"
 		msg = "LAN ENet • Porta %d (IP: %s) • %d/6 %s" % [current_port, current_address, connected_count, suffix]
 	network_status_changed.emit(int(net_mode), msg, get_connected_peers_list())
 
-# --- RPCs (Compartilhados por ENet e WebRTC Estrela) ---
+# --- Lógica Compartilhada + RPCs (ENet / Web Relay WSS / WebRTC) ---
 
-@rpc("any_peer", "reliable")
-func _rpc_register_peer(peer_name: String) -> void:
-	if not is_host():
-		return
-	var sender_id: int = multiplayer.get_remote_sender_id()
-	if sender_id <= 1:
+func _apply_registered_peer(sender_id: int, peer_name: String) -> void:
+	if not is_host() or sender_id <= 1:
 		return
 	var clean_name: String = peer_name.strip_edges()
 	if clean_name == "":
@@ -905,8 +1080,7 @@ func _rpc_register_peer(peer_name: String) -> void:
 	_emit_host_status()
 	peer_joined_room.emit(sender_id, clean_name)
 
-@rpc("authority", "reliable")
-func _rpc_sync_lobby(session_id: int, lobby_data: Dictionary) -> void:
+func _apply_sync_lobby(session_id: int, lobby_data: Dictionary) -> void:
 	if not is_client():
 		return
 	active_session_id = session_id
@@ -928,51 +1102,69 @@ func _rpc_sync_lobby(session_id: int, lobby_data: Dictionary) -> void:
 	var count: int = _peer_order.size()
 	var status_msg: String = ""
 	if transport_mode == TransportMode.WEBRTC:
-		status_msg = "WebRTC • Sala %s • %d/6 na mesa — aguardando Host iniciar" % [current_room_code, count]
+		var label_prefix: String = "Web (Relay WSS)" if _ws_relay_mode else "WebRTC"
+		status_msg = "%s • Sala %s • %d/6 na mesa — aguardando Host iniciar" % [label_prefix, current_room_code, count]
 	else:
 		status_msg = "LAN ENet • Conectado a %s:%d • %d/6 na mesa — aguardando Host iniciar" % [current_address, current_port, count]
 	network_status_changed.emit(int(net_mode), status_msg, get_connected_peers_list())
 	lobby_synced.emit(lobby_data)
 
-@rpc("authority", "reliable")
-func _rpc_match_started(session_id: int, snapshot: Dictionary) -> void:
+func _apply_match_started(session_id: int, snapshot: Dictionary) -> void:
 	if not is_client():
 		return
 	active_session_id = session_id
 	remote_match_started.emit(session_id, snapshot)
 
-@rpc("authority", "reliable")
-func _rpc_state_snapshot(session_id: int, snapshot: Dictionary) -> void:
-	if not is_client():
-		return
-	if session_id != active_session_id:
+func _apply_state_snapshot(session_id: int, snapshot: Dictionary) -> void:
+	if not is_client() or session_id != active_session_id:
 		return
 	remote_state_received.emit(session_id, snapshot)
 
-@rpc("authority", "reliable")
-func _rpc_match_event(session_id: int, event_type: String, payload: Dictionary) -> void:
-	if not is_client():
-		return
-	if session_id != active_session_id:
+func _apply_match_event(session_id: int, event_type: String, payload: Dictionary) -> void:
+	if not is_client() or session_id != active_session_id:
 		return
 	remote_event_received.emit(session_id, event_type, payload)
+
+func _apply_request_action(sender_id: int, session_id: int, action_name: String, params: Dictionary) -> void:
+	if not is_host() or sender_id <= 1 or session_id != active_session_id:
+		return
+	client_action_received.emit(sender_id, session_id, action_name, params)
+
+func _apply_lobby_pref(sender_id: int, pawn_idx: int, color_idx: int, player_name: String) -> void:
+	if not is_host() or sender_id <= 1:
+		return
+	client_lobby_pref_received.emit(sender_id, pawn_idx, color_idx, player_name)
+
+@rpc("any_peer", "reliable")
+func _rpc_register_peer(peer_name: String) -> void:
+	if not is_host():
+		return
+	_apply_registered_peer(multiplayer.get_remote_sender_id(), peer_name)
+
+@rpc("authority", "reliable")
+func _rpc_sync_lobby(session_id: int, lobby_data: Dictionary) -> void:
+	_apply_sync_lobby(session_id, lobby_data)
+
+@rpc("authority", "reliable")
+func _rpc_match_started(session_id: int, snapshot: Dictionary) -> void:
+	_apply_match_started(session_id, snapshot)
+
+@rpc("authority", "reliable")
+func _rpc_state_snapshot(session_id: int, snapshot: Dictionary) -> void:
+	_apply_state_snapshot(session_id, snapshot)
+
+@rpc("authority", "reliable")
+func _rpc_match_event(session_id: int, event_type: String, payload: Dictionary) -> void:
+	_apply_match_event(session_id, event_type, payload)
 
 @rpc("any_peer", "reliable")
 func _rpc_request_action(session_id: int, action_name: String, params: Dictionary) -> void:
 	if not is_host():
 		return
-	var sender_id: int = multiplayer.get_remote_sender_id()
-	if sender_id <= 1:
-		return
-	if session_id != active_session_id:
-		return
-	client_action_received.emit(sender_id, session_id, action_name, params)
+	_apply_request_action(multiplayer.get_remote_sender_id(), session_id, action_name, params)
 
 @rpc("any_peer", "reliable")
 func _rpc_set_lobby_pref(pawn_idx: int, color_idx: int, player_name: String = "") -> void:
 	if not is_host():
 		return
-	var sender_id: int = multiplayer.get_remote_sender_id()
-	if sender_id <= 1:
-		return
-	client_lobby_pref_received.emit(sender_id, pawn_idx, color_idx, player_name)
+	_apply_lobby_pref(multiplayer.get_remote_sender_id(), pawn_idx, color_idx, player_name)

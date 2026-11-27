@@ -5,7 +5,7 @@
 - **Núcleo e Regras (`core/`):**
   - `core/GameManager.gd`: orquestrador autoritativo do **Modo Clássico** (máquina de estados finita `TurnState`, economia, turnos, cartas, construções, hipotecas, negociações, falência, vitória e integração multiplayer). `main.gd` estende diretamente `res://core/GameManager.gd` na cena raiz `main.tscn`.
   - `core/BotAI.gd`: classe `RefCounted` pura (zero dependência de UI ou `SceneTree`) responsável pela tomada de decisão tática dos bots sob **5 arquétipos ocultos** (`AGRESSIVO`, `CONSERVADOR`, `MONOPOLISTA`, `IMOBILIARIO`, `ESPECULADOR`), sempre mascarados como `[BOT]` na UI, nos logs e nos snapshots de rede.
-  - `core/NetworkManager.gd`: camada de rede P2P autoritativa (Host `peer_id = 1` + até `5` clientes = 2 a 6 jogadores) com suporte a **ENet (LAN/Desktop)** e **WebRTC em topologia estrela (Web)** via sinalização WebSocket.
+  - `core/NetworkManager.gd`: camada de rede autoritativa (Host `peer_id = 1` + até `5` clientes = 2 a 6 jogadores) com suporte a **ENet (LAN/Desktop)** e **Multiplayer Web (Relay WSS em estrela no Render + fallback WebRTC)**.
   - `core/PlatformConfig.gd`: Autoload (`PlatformConfig`) de detecção de perfil de plataforma (`desktop` vs. `android`) com suporte a `force_mobile_ui` e variável de ambiente `MAGNATA_FORCE_MOBILE` para simulação mobile no PC.
   - `core/SoundManager.gd`: síntese procedural local de efeitos sonoros (`AudioStreamWAV`) com pool de vozes e controles de mudo/volume/passos persistidos.
   - `core/BuildInfo.gd`: leitor de `res://data/version.json`, comparação SemVer/build e parser opcional de `releases/latest` no GitHub.
@@ -25,7 +25,7 @@
 - **Ferramentas, Launcher, Sinalização e Automação (`tools/`, `.antigravity/` e `builds/`):**
   - `tools/generate_pawn_art.gd` e `tools/generate_tile_art.gd`: utilitários Godot de geração de arte.
   - `tools/launcher/`: projeto Godot 4.7 separado do Launcher Inicial (`MagnataDoPampaLauncher.exe`), isolado do projeto principal via `tools/launcher/.gdignore`.
-  - `tools/signaling_server/`: servidor WebSocket Node.js (`server.mjs`) para sinalização WebRTC (ignorado pelo Godot via `.gdignore`).
+  - `tools/signaling_server/`: servidor WebSocket Node.js (`server.mjs`) para sinalização e **Room Relay WSS** com heartbeat keepalive (ignorado pelo Godot via `.gdignore`).
   - `tools/release/`: scripts de build/exportação unificada (`build_release.ps1`, `export_builds.ps1` e `configure_android_export.ps1`, isolados via `.gdignore`).
   - `builds/`: pasta de saída local (`latest/`, `releases/`, `manifest.json`), ignorada tanto pelo Godot (`.gdignore`) quanto pelo Git (`.gitignore`).
   - `assets/brand/`: identidade visual oficial própria (`magnata_emblem.png`, `magnata_icon.ico`, `magnata_icon_192.png`, `magnata_banner.jpg`).
