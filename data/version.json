@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
-    "version":  "0.11.1",
-    "build_number":  15,
+    "version":  "0.11.2",
+    "build_number":  16,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
-    "release_notes":  "v0.11.1: Correcao definitiva do audio de fundo (loop acustico pampeano suave de 8s sem chiado ou estalo e pausa automatica em segundo plano), correcao de falencia ao escapar do Xadrez, separacao de toque vs arrasto/pinca no Android, barra rapida responsiva e melhoria nos Bots em equipe.",
-    "built_at":  "2026-11-26T23:18:42Z",
-    "git_commit":  "a94344c"
+    "release_notes":  "v0.11.2: Correcao definitiva do Multiplayer Web (substitui handshake WebRTC travado por WebSocket Room Relay WSS no servidor Render com keepalive 25s + serializacao binaria em NetworkManager) e remocao da copia para pasta MDP.",
+    "built_at":  "2026-11-27T03:42:44Z",
+    "git_commit":  "df52c31"
 }
