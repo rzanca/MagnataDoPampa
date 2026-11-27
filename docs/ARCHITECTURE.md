@@ -155,7 +155,7 @@ magnata-do-pampa/
   - `powershell -ExecutionPolicy Bypass -File .\.antigravity\automation\validate_and_commit.ps1 -CommitMessage "mensagem"`
 - **Exportação Automatizada (Windows + Android + Launcher):**
   - `powershell -ExecutionPolicy Bypass -File .\tools\release\build_release.ps1 -Targets All`
-  - Flags úteis: `-BumpPatch`, `-BumpMinor`, `-NoBump`, `-GitHubRepo "usuario/repo"`, `-CopyToMdp`, `-PublishGitHubRelease`.
+  - Flags úteis: `-BumpPatch`, `-BumpMinor`, `-NoBump`, `-GitHubRepo "usuario/repo"`, `-SkipGitHubRelease`.
 - **Sinalização WebRTC local:**
   - `node .\tools\signaling_server\server.mjs`
 - **Launcher em desenvolvimento / produção:**

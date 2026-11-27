@@ -15,7 +15,6 @@ param(
     [string]$GitHubRepo = "",
     [string]$ReleaseNotes = "",
     [switch]$DebugBuild,
-    [switch]$CopyToMdp,
     [switch]$SkipValidation,
     [switch]$PublishGitHubRelease,
     [switch]$SkipGitHubRelease

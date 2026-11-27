@@ -15,7 +15,6 @@ param(
     [string]$GitHubRepo = "",
     [string]$ReleaseNotes = "",
     [switch]$DebugBuild,
-    [switch]$CopyToMdp,
     [switch]$SkipValidation,
     [switch]$PublishGitHubRelease,
     [switch]$SkipGitHubRelease
@@ -478,25 +477,6 @@ $ManifestReleasePath = Join-Path $ReleaseVersionDir "manifest.json"
 [System.IO.File]::WriteAllText($ManifestLatestPath, $ManifestJsonStr, $Utf8NoBom)
 [System.IO.File]::WriteAllText($ManifestReleasePath, $ManifestJsonStr, $Utf8NoBom)
 Write-Ok "Manifest gerado: $ManifestLatestPath"
-
-if ($CopyToMdp) {
-    $MdpDir = Join-Path (Split-Path -Parent $WorkspaceRoot) "MDP"
-    if (-not (Test-Path -LiteralPath $MdpDir)) { New-Item -ItemType Directory -Path $MdpDir -Force | Out-Null }
-    if (Test-Path (Join-Path $LatestDir "MagnataDoPampa.exe")) {
-        Copy-Item -LiteralPath (Join-Path $LatestDir "MagnataDoPampa.exe") -Destination (Join-Path $MdpDir "MagnataDoPampa.exe") -Force
-        Copy-Item -LiteralPath (Join-Path $LatestDir "version.json") -Destination (Join-Path $MdpDir "version.json") -Force
-    }
-    if (Test-Path (Join-Path $LatestDir "MagnataDoPampaLauncher.exe")) {
-        Copy-Item -LiteralPath (Join-Path $LatestDir "MagnataDoPampaLauncher.exe") -Destination (Join-Path $MdpDir "MagnataDoPampaLauncher.exe") -Force
-        if (Test-Path (Join-Path $LatestDir "launcher_config.json")) {
-            Copy-Item -LiteralPath (Join-Path $LatestDir "launcher_config.json") -Destination (Join-Path $MdpDir "launcher_config.json") -Force
-        }
-    }
-    if (Test-Path (Join-Path $LatestDir "MagnataDoPampa.apk")) {
-        Copy-Item -LiteralPath (Join-Path $LatestDir "MagnataDoPampa.apk") -Destination (Join-Path $MdpDir "mdp.apk") -Force
-    }
-    Write-Ok "Arquivos copiados para $MdpDir"
-}
 
 $ShouldPublishRelease = $true
 if ($SkipGitHubRelease) {
