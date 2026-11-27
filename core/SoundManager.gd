@@ -6,9 +6,9 @@ const SUBTLE_EVENTS: Array[String] = ["hop", "ui"]
 
 var _players: Array[AudioStreamPlayer] = []
 var _next_player_idx: int = 0
-var _stream_cache: Dictionary[String, AudioStreamWAV] = {}
+var _stream_cache: Dictionary[String, AudioStream] = {}
 var _ambient_player: AudioStreamPlayer = null
-var _ambient_cache: Dictionary[String, AudioStreamWAV] = {}
+var _ambient_cache: Dictionary[String, AudioStream] = {}
 var _current_ambient_season: String = ""
 
 var _audio_enabled: bool = true
@@ -101,19 +101,61 @@ func _sync_ambient_playback() -> void:
 		return
 	if DisplayServer.get_name() == "headless" or AudioServer.get_driver_name() == "Dummy":
 		return
-	var stream: AudioStreamWAV = get_or_create_ambient_stream(_current_ambient_season)
+	var stream: AudioStream = get_or_create_ambient_stream(_current_ambient_season)
 	if stream == null:
 		return
 	if _ambient_player.stream != stream or not _ambient_player.playing:
 		_ambient_player.stream = stream
 		_ambient_player.play()
 
-func get_or_create_ambient_stream(season_id: String) -> AudioStreamWAV:
+func _try_load_external_audio(rel_subdir: String, base_name: String, loop_enabled: bool) -> AudioStream:
+	var clean_name: String = base_name.strip_edges().to_lower()
+	if clean_name == "":
+		return null
+	for ext: String in ["ogg", "wav", "mp3"]:
+		var res_path: String = "res://assets/audio/%s/%s.%s" % [rel_subdir, clean_name, ext]
+		if ResourceLoader.exists(res_path):
+			var loaded: Resource = ResourceLoader.load(res_path)
+			if loaded is AudioStream:
+				if loaded is AudioStreamOggVorbis:
+					(loaded as AudioStreamOggVorbis).loop = loop_enabled
+				elif loaded is AudioStreamMP3:
+					(loaded as AudioStreamMP3).loop = loop_enabled
+				elif loaded is AudioStreamWAV and loop_enabled:
+					(loaded as AudioStreamWAV).loop_mode = AudioStreamWAV.LOOP_FORWARD
+				return loaded as AudioStream
+		var abs_path: String = ProjectSettings.globalize_path(res_path)
+		if FileAccess.file_exists(abs_path):
+			if ext == "ogg":
+				var ogg: AudioStreamOggVorbis = AudioStreamOggVorbis.load_from_file(abs_path)
+				if ogg != null:
+					ogg.loop = loop_enabled
+					return ogg
+			elif ext == "wav":
+				var wav: AudioStreamWAV = AudioStreamWAV.load_from_file(abs_path)
+				if wav != null:
+					if loop_enabled:
+						wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+					return wav
+			elif ext == "mp3":
+				var mp3_bytes: PackedByteArray = FileAccess.get_file_as_bytes(abs_path)
+				if not mp3_bytes.is_empty():
+					var mp3: AudioStreamMP3 = AudioStreamMP3.new()
+					mp3.data = mp3_bytes
+					mp3.loop = loop_enabled
+					return mp3
+	return null
+
+func get_or_create_ambient_stream(season_id: String) -> AudioStream:
 	var key: String = season_id.strip_edges().to_upper()
 	if key == "":
 		key = "PRIMAVERA"
 	if _ambient_cache.has(key):
 		return _ambient_cache[key]
+	var ext_stream: AudioStream = _try_load_external_audio("ambient", key, true)
+	if ext_stream != null:
+		_ambient_cache[key] = ext_stream
+		return ext_stream
 	var wav: AudioStreamWAV = _build_ambient_wav(key)
 	if wav != null:
 		_ambient_cache[key] = wav
@@ -129,7 +171,7 @@ func play_sfx(event_name: String) -> void:
 	if _players.is_empty():
 		return
 
-	var stream: AudioStreamWAV = get_or_create_stream(event_name)
+	var stream: AudioStream = get_or_create_stream(event_name)
 	if stream == null:
 		return
 
@@ -140,9 +182,13 @@ func play_sfx(event_name: String) -> void:
 	voice.stream = stream
 	voice.play()
 
-func get_or_create_stream(event_name: String) -> AudioStreamWAV:
+func get_or_create_stream(event_name: String) -> AudioStream:
 	if _stream_cache.has(event_name):
 		return _stream_cache[event_name]
+	var ext_stream: AudioStream = _try_load_external_audio("sfx", event_name, false)
+	if ext_stream != null:
+		_stream_cache[event_name] = ext_stream
+		return ext_stream
 	var wav: AudioStreamWAV = _build_preset_wav(event_name)
 	if wav != null:
 		_stream_cache[event_name] = wav

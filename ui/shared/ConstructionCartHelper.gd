@@ -4,11 +4,16 @@ static func collect_player_monopolies(
 	player_id: int,
 	tiles: Array[Dictionary],
 	owners_map: Dictionary[int, int],
-	mortgaged_map: Dictionary[int, bool]
+	mortgaged_map: Dictionary[int, bool],
+	allied_ids: Array[int] = []
 ) -> Array[Dictionary]:
 	var groups_order: Array[String] = []
 	var groups_tiles: Dictionary[String, Array] = {}
 	var groups_color: Dictionary[String, String] = {}
+	var allowed_owners: Array[int] = [player_id]
+	for aid: int in allied_ids:
+		if not (aid in allowed_owners):
+			allowed_owners.append(aid)
 
 	for i: int in range(tiles.size()):
 		var t: Dictionary = tiles[i]
@@ -32,7 +37,8 @@ static func collect_player_monopolies(
 		var any_mortgaged: bool = false
 		for tid_var: Variant in t_list:
 			var tid: int = int(tid_var)
-			if owners_map.get(tid, -1) != player_id:
+			var owner_pid: int = int(owners_map.get(tid, -1))
+			if not (owner_pid in allowed_owners):
 				owns_all = false
 				break
 			if mortgaged_map.get(tid, false):

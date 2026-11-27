@@ -44,12 +44,12 @@ const PAWN_OPTIONS: Array[Dictionary] = [
 ]
 
 const COLOR_OPTIONS: Array[Dictionary] = [
-	{ "name": "Vermelho", "hex": "#FF3B4E" },
-	{ "name": "Verde Pampa", "hex": "#22C55E" },
-	{ "name": "Ouro Pampa", "hex": "#FFCA3A" },
-	{ "name": "Azul Guaíba", "hex": "#2563EB" },
-	{ "name": "Roxo Vinhedo", "hex": "#A45CFF" },
-	{ "name": "Terracota", "hex": "#FF7A38" }
+	{ "name": "Carmim", "hex": "#E11D48" },
+	{ "name": "Esmeralda", "hex": "#10B981" },
+	{ "name": "Ouro Vivo", "hex": "#FACC15" },
+	{ "name": "Azul Cobalto", "hex": "#2563EB" },
+	{ "name": "Magenta", "hex": "#C026D3" },
+	{ "name": "Pérola", "hex": "#F1F5F9" }
 ]
 const TEAM_PRESETS: Array[Dictionary] = [
 	{
@@ -100,6 +100,10 @@ var _slot_color_indices: Array[int] = []
 var _slot_peer_ids: Array[int] = []
 var _slot_peer_statuses: Array[String] = []
 var _slot_team_badges: Array[Label] = []
+var _slot_swatch_rows: Array[HBoxContainer] = []
+var _slot_team_color_pills: Array[Label] = []
+var _slot_up_btns: Array[Button] = []
+var _slot_down_btns: Array[Button] = []
 var _team_mode: String = "ffa" # "ffa" | "2v2" | "3v3"
 var _team_preset_idx: int = 0
 var _btn_team_ffa: Button
@@ -108,7 +112,30 @@ var _btn_team_3v3: Button
 var _btn_team_theme: Button
 var _updating_slots: bool = false
 
-# Controles de Modo Local vs P2P LAN (ENet) vs Multiplayer Web (WebRTC)
+# Fluxo em 3 Etapas (1: Modo | 2: Configurações & Sala | 3: Estanceiros & Iniciar)
+var _wizard_step: int = 0
+var _net_intent: String = "host" # "host" | "join"
+var _step_pill_btns: Array[Button] = []
+var _step1_panel: VBoxContainer
+var _step2_panel: VBoxContainer
+var _step3_panel: VBoxContainer
+var _host_config_box: PanelContainer
+var _net_intent_panel: PanelContainer
+var _btn_intent_host: Button
+var _btn_intent_join: Button
+var _btn_step1_next: Button
+var _btn_step2_back: Button
+var _btn_step2_next: Button
+var _btn_step3_back: Button
+var _step3_room_banner: PanelContainer
+var _step3_room_label: Label
+var _btn_step3_copy: Button
+var _btn_step3_leave: Button
+var _p2p_ip_lbl: Label
+var _web_code_lbl: Label
+var _p2p_mode_badge: Label
+
+# Controles de Modo Local vs P2P LAN (ENet) vs Multiplayer Web
 var _active_mode_tab: int = MODE_TAB_LOCAL
 var _net_mode: int = 0 # 0=LOCAL, 1=HOST, 2=CLIENT
 var _net_transport: int = 0 # 0=NONE, 1=ENET, 2=WEBRTC
@@ -186,6 +213,11 @@ func open_screen() -> void:
 	if _error_label != null:
 		_error_label.text = ""
 	_updating_slots = false
+	if _net_mode == 0:
+		_wizard_step = 0
+	elif _net_mode == 2:
+		_wizard_step = 2
+	_refresh_wizard_ui()
 	_refresh_visible_slots()
 	_refresh_exclusive_choices()
 	_on_viewport_size_changed()
@@ -442,51 +474,189 @@ func _build_ui() -> void:
 	_btn_quit.pressed.connect(func() -> void: quit_game_requested.emit())
 	header_row.add_child(_btn_quit)
 
-	# --- Barra de Modo (Local | P2P LAN ENet | Multiplayer Web WebRTC) ---
+	# --- Indicador de Etapas (1. Modo -> 2. Config & Sala -> 3. Jogadores & Iniciar) ---
+	var stepper_row: HBoxContainer = HBoxContainer.new()
+	stepper_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	stepper_row.add_theme_constant_override("separation", 10)
+	root_vbox.add_child(stepper_row)
+
+	var step_titles: Array[String] = [
+		"1. Modo de Jogo",
+		"2. Config & Sala",
+		"3. Jogadores & Iniciar"
+	]
+	_step_pill_btns.clear()
+	for s_idx: int in range(step_titles.size()):
+		var s_btn: Button = Button.new()
+		s_btn.text = step_titles[s_idx]
+		var target_s: int = s_idx
+		s_btn.pressed.connect(func() -> void: _on_step_pill_pressed(target_s))
+		stepper_row.add_child(s_btn)
+		_step_pill_btns.append(s_btn)
+
+	# === ETAPA 1: MODO DE JOGO (LOCAL | P2P LAN | SERVIDOR WEB) ===
+	_step1_panel = VBoxContainer.new()
+	_step1_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_step1_panel.add_theme_constant_override("separation", 18)
+	root_vbox.add_child(_step1_panel)
+
+	var s1_spacer_top: Control = Control.new()
+	s1_spacer_top.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_step1_panel.add_child(s1_spacer_top)
+
+	var s1_hdr_vb: VBoxContainer = VBoxContainer.new()
+	s1_hdr_vb.add_theme_constant_override("separation", 6)
+	_step1_panel.add_child(s1_hdr_vb)
+
+	var s1_title: Label = Label.new()
+	s1_title.text = "Escolha o Modo da Partida"
+	s1_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if _bold_font != null:
+		s1_title.add_theme_font_override("font", _bold_font)
+	s1_title.add_theme_font_size_override("font_size", roundi(22.0 * f_scale))
+	s1_title.add_theme_color_override("font_color", Color("#F5D06F"))
+	s1_hdr_vb.add_child(s1_title)
+
+	var s1_sub: Label = Label.new()
+	s1_sub.text = "Jogue solo contra Bots no seu aparelho, em rede local P2P ou pelo Servidor Web com amigos."
+	s1_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	s1_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	s1_sub.add_theme_font_size_override("font_size", roundi(13.5 * f_scale))
+	s1_sub.add_theme_color_override("font_color", Color("#A7C2B2"))
+	s1_hdr_vb.add_child(s1_sub)
+
 	var mode_row: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
 	if mode_row is HBoxContainer:
 		(mode_row as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
-		mode_row.add_theme_constant_override("separation", 10)
+		mode_row.add_theme_constant_override("separation", 16)
 	else:
 		(mode_row as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
-		mode_row.add_theme_constant_override("h_separation", 8)
-		mode_row.add_theme_constant_override("v_separation", 8)
-	root_vbox.add_child(mode_row)
+		mode_row.add_theme_constant_override("h_separation", 12)
+		mode_row.add_theme_constant_override("v_separation", 12)
+	_step1_panel.add_child(mode_row)
 
 	_btn_mode_local = Button.new()
-	_btn_mode_local.text = "Modo Local (Solo / Mesa)"
+	_btn_mode_local.text = "MODO LOCAL\nSolo vs Bots / Passa-e-Joga"
+	_btn_mode_local.tooltip_text = "Partida offline imediata no mesmo dispositivo."
 	_btn_mode_local.pressed.connect(func() -> void: _set_mode_tab(MODE_TAB_LOCAL))
 	mode_row.add_child(_btn_mode_local)
 
 	_btn_mode_p2p = Button.new()
-	_btn_mode_p2p.text = "P2P LAN (ENet Desktop)"
+	_btn_mode_p2p.text = "P2P LAN (ENet)\nRede Local / IP Direto"
 	_btn_mode_p2p.disabled = OS.has_feature("web")
 	if OS.has_feature("web"):
-		_btn_mode_p2p.tooltip_text = "ENet (UDP) disponível apenas no executável Desktop; no navegador use Multiplayer Web (WebRTC)."
+		_btn_mode_p2p.tooltip_text = "ENet (UDP) disponível apenas no executável Desktop; no navegador use Servidor Web (WebRTC)."
+	else:
+		_btn_mode_p2p.tooltip_text = "Conexão direta em rede local ou VPN por IP e Porta."
 	_btn_mode_p2p.pressed.connect(func() -> void: _set_mode_tab(MODE_TAB_ENET))
 	mode_row.add_child(_btn_mode_p2p)
 
 	_btn_mode_web = Button.new()
-	_btn_mode_web.text = "Multiplayer Web (WebRTC)"
+	_btn_mode_web.text = "SERVIDOR WEB (WebRTC)\nSala por Código • Multiplataforma"
+	_btn_mode_web.tooltip_text = "Crie uma sala com código curto ou entre na sala do Host (PC, Web e Android)."
 	_btn_mode_web.pressed.connect(func() -> void: _set_mode_tab(MODE_TAB_WEBRTC))
 	mode_row.add_child(_btn_mode_web)
 
-	var mode_sep: Label = Label.new()
-	mode_sep.text = "|"
-	mode_sep.add_theme_color_override("font_color", Color("#3C5949"))
-	mode_row.add_child(mode_sep)
+	var s1_cta_row: HBoxContainer = HBoxContainer.new()
+	s1_cta_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_step1_panel.add_child(s1_cta_row)
+
+	_btn_step1_next = Button.new()
+	_btn_step1_next.text = "Avançar: Configurar Partida →"
+	_style_button(_btn_step1_next, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), roundi(16.0 * f_scale), Vector2(310.0, 52.0 if not _is_touch_mode else 58.0), 12, 2)
+	_btn_step1_next.pressed.connect(func() -> void: _set_wizard_step(1))
+	s1_cta_row.add_child(_btn_step1_next)
+
+	var s1_spacer_bot: Control = Control.new()
+	s1_spacer_bot.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_step1_panel.add_child(s1_spacer_bot)
+
+	# === ETAPA 2: PAPEL ONLINE + SALA + CONFIGURAÇÕES DO HOST ===
+	_step2_panel = VBoxContainer.new()
+	_step2_panel.visible = false
+	_step2_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_step2_panel.add_theme_constant_override("separation", 12)
+	root_vbox.add_child(_step2_panel)
+
+	# Seletor Host vs Convidado (somente para P2P / Servidor Web)
+	_net_intent_panel = PanelContainer.new()
+	_net_intent_panel.visible = false
+	var ni_style: StyleBoxFlat = _make_box("#101B16", "#2E4A3C", 12, 1)
+	ni_style.content_margin_left = 14.0
+	ni_style.content_margin_right = 14.0
+	ni_style.content_margin_top = 10.0
+	ni_style.content_margin_bottom = 10.0
+	_net_intent_panel.add_theme_stylebox_override("panel", ni_style)
+	_step2_panel.add_child(_net_intent_panel)
+
+	var ni_row: HBoxContainer = HBoxContainer.new()
+	ni_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	ni_row.add_theme_constant_override("separation", 12)
+	_net_intent_panel.add_child(ni_row)
+
+	var ni_lbl: Label = Label.new()
+	ni_lbl.text = "Seu papel na sala:"
+	if _bold_font != null:
+		ni_lbl.add_theme_font_override("font", _bold_font)
+	ni_lbl.add_theme_font_size_override("font_size", roundi(14.0 * f_scale))
+	ni_lbl.add_theme_color_override("font_color", Color("#DCECE3"))
+	ni_row.add_child(ni_lbl)
+
+	_btn_intent_host = Button.new()
+	_btn_intent_host.text = "Criar Sala (HOST)"
+	_btn_intent_host.tooltip_text = "Configure regras, times e quantidade de jogadores antes de abrir a sala."
+	_btn_intent_host.pressed.connect(func() -> void: _set_net_intent("host"))
+	ni_row.add_child(_btn_intent_host)
+
+	_btn_intent_join = Button.new()
+	_btn_intent_join.text = "Entrar em Sala (Convidado)"
+	_btn_intent_join.tooltip_text = "Entre em uma sala já configurada pelo Host."
+	_btn_intent_join.pressed.connect(func() -> void: _set_net_intent("join"))
+	ni_row.add_child(_btn_intent_join)
+
+	# --- Configurações Exclusivas do HOST / Local ---
+	_host_config_box = PanelContainer.new()
+	var hc_style: StyleBoxFlat = _make_box("#121F19", "#375645", 12, 1)
+	hc_style.content_margin_left = 14.0
+	hc_style.content_margin_right = 14.0
+	hc_style.content_margin_top = 10.0
+	hc_style.content_margin_bottom = 10.0
+	_host_config_box.add_theme_stylebox_override("panel", hc_style)
+	_step2_panel.add_child(_host_config_box)
+
+	var hc_vb: VBoxContainer = VBoxContainer.new()
+	hc_vb.add_theme_constant_override("separation", 10)
+	_host_config_box.add_child(hc_vb)
+
+	var rules_row: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
+	if rules_row is HBoxContainer:
+		(rules_row as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+		rules_row.add_theme_constant_override("separation", 10)
+	else:
+		(rules_row as HFlowContainer).alignment = FlowContainer.ALIGNMENT_CENTER
+		rules_row.add_theme_constant_override("h_separation", 8)
+		rules_row.add_theme_constant_override("v_separation", 8)
+	hc_vb.add_child(rules_row)
+
+	var rules_lbl: Label = Label.new()
+	rules_lbl.text = "Conjunto de Regras:"
+	if _bold_font != null:
+		rules_lbl.add_theme_font_override("font", _bold_font)
+	rules_lbl.add_theme_font_size_override("font_size", roundi(14.0 * f_scale))
+	rules_lbl.add_theme_color_override("font_color", Color("#EDF5F0"))
+	rules_row.add_child(rules_lbl)
 
 	_btn_rules_dynamic = Button.new()
 	_btn_rules_dynamic.text = "Estância Dinâmica"
 	_btn_rules_dynamic.tooltip_text = "Estações do Pampa, draft inicial de 2 escrituras e meta ágil (30 rodadas ou 3 monopólios)."
 	_btn_rules_dynamic.pressed.connect(func() -> void: _set_rules_mode("dynamic"))
-	mode_row.add_child(_btn_rules_dynamic)
+	rules_row.add_child(_btn_rules_dynamic)
 
 	_btn_rules_classic = Button.new()
 	_btn_rules_classic.text = "Clássico Tradicional"
 	_btn_rules_classic.tooltip_text = "Regras tradicionais completas sem draft inicial nem limite de rodadas."
 	_btn_rules_classic.pressed.connect(func() -> void: _set_rules_mode("classic"))
-	mode_row.add_child(_btn_rules_classic)
+	rules_row.add_child(_btn_rules_classic)
 	_refresh_rules_mode_buttons()
 
 	# --- Painel de Conexão P2P LAN (ENet: Hospedar / Entrar por IP e Porta) ---
@@ -498,7 +668,7 @@ func _build_ui() -> void:
 	p2p_style.content_margin_top = 10.0
 	p2p_style.content_margin_bottom = 10.0
 	_p2p_panel.add_theme_stylebox_override("panel", p2p_style)
-	root_vbox.add_child(_p2p_panel)
+	_step2_panel.add_child(_p2p_panel)
 
 	var p2p_vb: VBoxContainer = VBoxContainer.new()
 	p2p_vb.add_theme_constant_override("separation", 8)
@@ -526,11 +696,11 @@ func _build_ui() -> void:
 	_p2p_name_edit.add_theme_font_size_override("font_size", p2p_fs)
 	p2p_row.add_child(_p2p_name_edit)
 
-	var ip_lbl: Label = Label.new()
-	ip_lbl.text = "IP:"
-	ip_lbl.add_theme_font_size_override("font_size", p2p_fs)
-	ip_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
-	p2p_row.add_child(ip_lbl)
+	_p2p_ip_lbl = Label.new()
+	_p2p_ip_lbl.text = "IP:"
+	_p2p_ip_lbl.add_theme_font_size_override("font_size", p2p_fs)
+	_p2p_ip_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	p2p_row.add_child(_p2p_ip_lbl)
 
 	_p2p_ip_edit = LineEdit.new()
 	_p2p_ip_edit.text = "127.0.0.1"
@@ -554,13 +724,13 @@ func _build_ui() -> void:
 
 	_btn_host = Button.new()
 	_btn_host.text = "Hospedar Sala"
-	_style_button(_btn_host, "#226B50", "#2C8765", "#184F3B", "#7BF1A8", Color.WHITE, p2p_fs, Vector2(138.0, p2p_h), 9, 1)
+	_style_button(_btn_host, "#226B50", "#2C8765", "#184F3B", "#7BF1A8", Color.WHITE, p2p_fs, Vector2(148.0, p2p_h), 9, 1)
 	_btn_host.pressed.connect(_on_host_pressed)
 	p2p_row.add_child(_btn_host)
 
 	_btn_join = Button.new()
 	_btn_join.text = "Entrar na Sala"
-	_style_button(_btn_join, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), p2p_fs, Vector2(138.0, p2p_h), 9, 1)
+	_style_button(_btn_join, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), p2p_fs, Vector2(148.0, p2p_h), 9, 1)
 	_btn_join.pressed.connect(_on_join_pressed)
 	p2p_row.add_child(_btn_join)
 
@@ -588,7 +758,7 @@ func _build_ui() -> void:
 	web_style.content_margin_top = 10.0
 	web_style.content_margin_bottom = 10.0
 	_web_panel.add_theme_stylebox_override("panel", web_style)
-	root_vbox.add_child(_web_panel)
+	_step2_panel.add_child(_web_panel)
 
 	var web_vb: VBoxContainer = VBoxContainer.new()
 	web_vb.add_theme_constant_override("separation", 8)
@@ -618,11 +788,11 @@ func _build_ui() -> void:
 	_web_name_edit.add_theme_font_size_override("font_size", p2p_fs)
 	web_row_a.add_child(_web_name_edit)
 
-	var wc_lbl: Label = Label.new()
-	wc_lbl.text = "Código:"
-	wc_lbl.add_theme_font_size_override("font_size", p2p_fs)
-	wc_lbl.add_theme_color_override("font_color", Color("#CFE4F2"))
-	web_row_a.add_child(wc_lbl)
+	_web_code_lbl = Label.new()
+	_web_code_lbl.text = "Código:"
+	_web_code_lbl.add_theme_font_size_override("font_size", p2p_fs)
+	_web_code_lbl.add_theme_color_override("font_color", Color("#CFE4F2"))
+	web_row_a.add_child(_web_code_lbl)
 
 	_web_code_edit = LineEdit.new()
 	_web_code_edit.placeholder_text = "Ex.: P7K4M2"
@@ -633,13 +803,13 @@ func _build_ui() -> void:
 
 	_btn_web_host = Button.new()
 	_btn_web_host.text = "Criar Sala Web"
-	_style_button(_btn_web_host, "#226B50", "#2C8765", "#184F3B", "#7BF1A8", Color.WHITE, p2p_fs, Vector2(138.0, p2p_h), 9, 1)
+	_style_button(_btn_web_host, "#226B50", "#2C8765", "#184F3B", "#7BF1A8", Color.WHITE, p2p_fs, Vector2(148.0, p2p_h), 9, 1)
 	_btn_web_host.pressed.connect(_on_web_host_pressed)
 	web_row_a.add_child(_btn_web_host)
 
 	_btn_web_join = Button.new()
 	_btn_web_join.text = "Entrar com Código"
-	_style_button(_btn_web_join, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), p2p_fs, Vector2(154.0, p2p_h), 9, 1)
+	_style_button(_btn_web_join, "#1B425C", "#24577A", "#143145", "#4EA8DE", Color("#E4F5FF"), p2p_fs, Vector2(162.0, p2p_h), 9, 1)
 	_btn_web_join.pressed.connect(_on_web_join_pressed)
 	web_row_a.add_child(_btn_web_join)
 
@@ -715,22 +885,22 @@ func _build_ui() -> void:
 	_web_turn_row.add_child(_web_turn_pass_edit)
 
 	_web_status_label = Label.new()
-	_web_status_label.text = "WebRTC Estrela (Host + até 5 convidados = 6 estanceiros) • STUN público ativo por padrão."
+	_web_status_label.text = "Servidor Web (Relay WSS) • Crie uma sala para gerar o código ou digite o código do Host."
 	_web_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_web_status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_web_status_label.add_theme_font_size_override("font_size", roundi(12.5 * f_scale))
 	_web_status_label.add_theme_color_override("font_color", Color("#9ED8F5"))
 	web_vb.add_child(_web_status_label)
 
-	# --- Barra de Quantidade de Jogadores + Atalhos Rápidos (estilo Monopoly/Rento) ---
+	# --- Barra de Quantidade de Jogadores + Times + Atalhos Rápidos (dentro do painel do HOST/Local) ---
 	var toolbar_panel: PanelContainer = PanelContainer.new()
-	var tb_style: StyleBoxFlat = _make_box("#15221B", "#283D32", 12, 1)
-	tb_style.content_margin_left = 16.0
-	tb_style.content_margin_right = 16.0
-	tb_style.content_margin_top = 10.0
-	tb_style.content_margin_bottom = 10.0
+	var tb_style: StyleBoxFlat = _make_box("#101B15", "#283D32", 10, 1)
+	tb_style.content_margin_left = 12.0
+	tb_style.content_margin_right = 12.0
+	tb_style.content_margin_top = 8.0
+	tb_style.content_margin_bottom = 8.0
 	toolbar_panel.add_theme_stylebox_override("panel", tb_style)
-	root_vbox.add_child(toolbar_panel)
+	hc_vb.add_child(toolbar_panel)
 
 	var toolbar: Container = HFlowContainer.new() if _is_touch_mode else HBoxContainer.new()
 	if toolbar is HBoxContainer:
@@ -816,12 +986,74 @@ func _build_ui() -> void:
 		toolbar.add_child(q_btn)
 		_quick_buttons.append(q_btn)
 
+	var s2_spacer: Control = Control.new()
+	s2_spacer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_step2_panel.add_child(s2_spacer)
+
+	var s2_nav: HBoxContainer = HBoxContainer.new()
+	s2_nav.alignment = BoxContainer.ALIGNMENT_CENTER
+	s2_nav.add_theme_constant_override("separation", 12)
+	_step2_panel.add_child(s2_nav)
+
+	_btn_step2_back = Button.new()
+	_btn_step2_back.text = "← Voltar: Modo"
+	_style_button(_btn_step2_back, "#18261F", "#24382E", "#111C16", "#466354", Color("#CFE3D8"), roundi(14.0 * f_scale), Vector2(180.0, 48.0 if not _is_touch_mode else 54.0), 10, 1)
+	_btn_step2_back.pressed.connect(func() -> void: _set_wizard_step(0))
+	s2_nav.add_child(_btn_step2_back)
+
+	_btn_step2_next = Button.new()
+	_btn_step2_next.text = "Avançar: Jogadores →"
+	_style_button(_btn_step2_next, "#E5BE52", "#F6D472", "#CCA53A", "#FFF2C6", Color("#101713"), roundi(15.5 * f_scale), Vector2(280.0, 48.0 if not _is_touch_mode else 54.0), 12, 2)
+	_btn_step2_next.pressed.connect(func() -> void: _set_wizard_step(2))
+	s2_nav.add_child(_btn_step2_next)
+
+	# === ETAPA 3: LISTA DE ESTANCEIROS (COM ORDENAÇÃO DE TIMES) & INICIAR ===
+	_step3_panel = VBoxContainer.new()
+	_step3_panel.visible = false
+	_step3_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	_step3_panel.add_theme_constant_override("separation", 10)
+	root_vbox.add_child(_step3_panel)
+
+	_step3_room_banner = PanelContainer.new()
+	var s3b_style: StyleBoxFlat = _make_box("#13202A", "#4EA8DE", 10, 1)
+	s3b_style.content_margin_left = 14.0
+	s3b_style.content_margin_right = 14.0
+	s3b_style.content_margin_top = 8.0
+	s3b_style.content_margin_bottom = 8.0
+	_step3_room_banner.add_theme_stylebox_override("panel", s3b_style)
+	_step3_panel.add_child(_step3_room_banner)
+
+	var s3b_row: HBoxContainer = HBoxContainer.new()
+	s3b_row.add_theme_constant_override("separation", 10)
+	s3b_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	_step3_room_banner.add_child(s3b_row)
+
+	_step3_room_label = Label.new()
+	_step3_room_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_step3_room_label.add_theme_font_size_override("font_size", roundi(13.0 * f_scale))
+	_step3_room_label.add_theme_color_override("font_color", Color("#D8ECFA"))
+	s3b_row.add_child(_step3_room_label)
+
+	_btn_step3_copy = Button.new()
+	_btn_step3_copy.text = "Copiar Código"
+	_btn_step3_copy.visible = false
+	_style_button(_btn_step3_copy, "#3E351A", "#574A24", "#2B2411", "#F5D06F", Color("#FFF3C4"), roundi(12.5 * f_scale), Vector2(130.0, 34.0), 8, 1)
+	_btn_step3_copy.pressed.connect(_on_web_copy_code_pressed)
+	s3b_row.add_child(_btn_step3_copy)
+
+	_btn_step3_leave = Button.new()
+	_btn_step3_leave.text = "Sair da Sala"
+	_btn_step3_leave.visible = false
+	_style_button(_btn_step3_leave, "#592528", "#753135", "#401A1C", "#FF758F", Color("#FFE8E8"), roundi(12.5 * f_scale), Vector2(116.0, 34.0), 8, 1)
+	_btn_step3_leave.pressed.connect(_on_disconnect_pressed)
+	s3b_row.add_child(_btn_step3_leave)
+
 	# --- Grade Visual de Cartões de Jogadores (2 colunas com rolagem de segurança) ---
 	var slots_scroll: ScrollContainer = ScrollContainer.new()
 	slots_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	slots_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slots_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	root_vbox.add_child(slots_scroll)
+	_step3_panel.add_child(slots_scroll)
 
 	_cards_grid = GridContainer.new()
 	_cards_grid.columns = 2
@@ -830,6 +1062,10 @@ func _build_ui() -> void:
 	_cards_grid.add_theme_constant_override("v_separation", 12)
 	slots_scroll.add_child(_cards_grid)
 
+	_slot_swatch_rows.clear()
+	_slot_team_color_pills.clear()
+	_slot_up_btns.clear()
+	_slot_down_btns.clear()
 	for i: int in range(MAX_PLAYERS):
 		_slot_pawn_indices.append(i)
 		_slot_color_indices.append(i)
@@ -847,11 +1083,11 @@ func _build_ui() -> void:
 	_error_label.add_theme_color_override("font_color", Color("#FF758F"))
 	root_vbox.add_child(_error_label)
 
-	# --- Rodapé CTA ---
+	# --- Rodapé CTA (Etapa 3) ---
 	var footer_col: VBoxContainer = VBoxContainer.new()
 	footer_col.alignment = BoxContainer.ALIGNMENT_CENTER
 	footer_col.add_theme_constant_override("separation", 6)
-	root_vbox.add_child(footer_col)
+	_step3_panel.add_child(footer_col)
 
 	_summary_pill_label = Label.new()
 	_summary_pill_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -861,7 +1097,14 @@ func _build_ui() -> void:
 
 	var footer_row: HBoxContainer = HBoxContainer.new()
 	footer_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	footer_row.add_theme_constant_override("separation", 12)
 	footer_col.add_child(footer_row)
+
+	_btn_step3_back = Button.new()
+	_btn_step3_back.text = "← Voltar: Config"
+	_style_button(_btn_step3_back, "#18261F", "#24382E", "#111C16", "#466354", Color("#CFE3D8"), roundi(14.0 * f_scale), Vector2(180.0, 52.0 if not _is_touch_mode else 60.0), 10, 1)
+	_btn_step3_back.pressed.connect(func() -> void: _set_wizard_step(1))
+	footer_row.add_child(_btn_step3_back)
 
 	_btn_start = Button.new()
 	_btn_start.text = "Iniciar Partida"
@@ -873,13 +1116,14 @@ func _build_ui() -> void:
 		"#FFF2C6",
 		Color("#101713"),
 		roundi(19.0 * f_scale),
-		Vector2(380.0 if _is_touch_mode else 340.0, 62.0 if _is_touch_mode else 52.0),
+		Vector2(340.0 if _is_touch_mode else 340.0, 60.0 if _is_touch_mode else 52.0),
 		12,
 		2
 	)
 	_btn_start.pressed.connect(_on_start_pressed)
 	footer_row.add_child(_btn_start)
 	_refresh_mode_tabs()
+	_refresh_wizard_ui()
 	_refresh_table_summary()
 
 func _build_slot_card(slot_idx: int, f_scale: float, ctrl_h: float) -> PanelContainer:
@@ -1001,7 +1245,23 @@ func _build_slot_card(slot_idx: int, f_scale: float, ctrl_h: float) -> PanelCont
 	_slot_type_buttons.append(type_btn)
 	_refresh_slot_type_button(slot_idx)
 
-	# Linha B: Seletor de Peão + Paleta Tátil de Cores
+	var btn_up: Button = Button.new()
+	btn_up.text = "↑"
+	btn_up.tooltip_text = "Mover estanceiro para cima na ordem (troca equipe no modo Times)"
+	_style_button(btn_up, "#1A2B22", "#263E31", "#111D17", "#486858", Color("#E4F5EC"), roundi(13.0 * f_scale), Vector2(34.0, ctrl_h), 8, 1)
+	btn_up.pressed.connect(func() -> void: _move_slot(slot_idx, -1))
+	row_a.add_child(btn_up)
+	_slot_up_btns.append(btn_up)
+
+	var btn_down: Button = Button.new()
+	btn_down.text = "↓"
+	btn_down.tooltip_text = "Mover estanceiro para baixo na ordem (troca equipe no modo Times)"
+	_style_button(btn_down, "#1A2B22", "#263E31", "#111D17", "#486858", Color("#E4F5EC"), roundi(13.0 * f_scale), Vector2(34.0, ctrl_h), 8, 1)
+	btn_down.pressed.connect(func() -> void: _move_slot(slot_idx, 1))
+	row_a.add_child(btn_down)
+	_slot_down_btns.append(btn_down)
+
+	# Linha B: Seletor de Peão + Paleta Tátil de Cores (ou Cor da Equipe)
 	var row_b: HBoxContainer = HBoxContainer.new()
 	row_b.add_theme_constant_override("separation", 8)
 	row_b.alignment = BoxContainer.ALIGNMENT_CENTER
@@ -1023,6 +1283,15 @@ func _build_slot_card(slot_idx: int, f_scale: float, ctrl_h: float) -> PanelCont
 	var swatches_row: HBoxContainer = HBoxContainer.new()
 	swatches_row.add_theme_constant_override("separation", 5)
 	row_b.add_child(swatches_row)
+	_slot_swatch_rows.append(swatches_row)
+
+	var team_col_pill: Label = Label.new()
+	team_col_pill.visible = false
+	if _bold_font != null:
+		team_col_pill.add_theme_font_override("font", _bold_font)
+	team_col_pill.add_theme_font_size_override("font_size", roundi(11.5 * f_scale))
+	row_b.add_child(team_col_pill)
+	_slot_team_color_pills.append(team_col_pill)
 
 	var slot_swatches: Array = []
 	var sw_dim: float = 34.0 if _is_touch_mode else 28.0
@@ -1158,6 +1427,9 @@ func _refresh_team_controls() -> void:
 			lbl.visible = true
 			lbl.text = "[%s]" % str(t_info.get("name", "Equipe")).to_upper()
 			lbl.add_theme_color_override("font_color", Color(str(t_info.get("hex", "#F5D06F"))))
+	for i: int in range(_slot_accent_styles.size()):
+		_refresh_slot_color_visuals(i)
+	_refresh_reorder_buttons()
 
 func _apply_quick_solo_preset(target_count: int) -> void:
 	if _net_mode != 0:
@@ -1189,6 +1461,7 @@ func _refresh_count_buttons() -> void:
 func _refresh_visible_slots() -> void:
 	for i: int in range(_slot_rows.size()):
 		_slot_rows[i].visible = (i < _player_count)
+	_refresh_reorder_buttons()
 	_refresh_table_summary()
 
 func _refresh_table_summary() -> void:
@@ -1283,9 +1556,22 @@ func _refresh_slot_type_button(slot_idx: int) -> void:
 func _refresh_slot_color_visuals(slot_idx: int) -> void:
 	var sel_c: int = _slot_color_indices[slot_idx]
 	var hex_str: String = str(COLOR_OPTIONS[sel_c]["hex"])
+	var t_info: Dictionary = _get_slot_team_info(slot_idx)
+	var is_team: bool = not t_info.is_empty()
+	if is_team:
+		hex_str = str(t_info.get("hex", hex_str))
 	var col: Color = Color(hex_str)
 	_slot_accent_styles[slot_idx].bg_color = col
 	_slot_medal_styles[slot_idx].border_color = col
+
+	if slot_idx < _slot_swatch_rows.size() and _slot_swatch_rows[slot_idx] != null:
+		_slot_swatch_rows[slot_idx].visible = not is_team
+	if slot_idx < _slot_team_color_pills.size() and _slot_team_color_pills[slot_idx] != null:
+		var tc_pill: Label = _slot_team_color_pills[slot_idx]
+		tc_pill.visible = is_team
+		if is_team:
+			tc_pill.text = "Cor da Equipe: %s" % str(t_info.get("name", "Equipe"))
+			tc_pill.add_theme_color_override("font_color", col.lightened(0.28))
 
 	var swatches: Array = _slot_color_buttons[slot_idx]
 	for c_i: int in range(swatches.size()):
@@ -1299,6 +1585,64 @@ func _refresh_slot_color_visuals(slot_idx: int) -> void:
 		sw_btn.add_theme_stylebox_override("hover", _make_box(c_hex, "#FFF2C6", 8, 2))
 		sw_btn.add_theme_stylebox_override("pressed", sb)
 		sw_btn.add_theme_stylebox_override("focus", sb)
+
+func _refresh_reorder_buttons() -> void:
+	var can_reorder: bool = (_net_mode != 2)
+	for i: int in range(MAX_PLAYERS):
+		var row_visible: bool = (i < _player_count)
+		if i < _slot_up_btns.size() and _slot_up_btns[i] != null:
+			_slot_up_btns[i].visible = can_reorder and row_visible
+			_slot_up_btns[i].disabled = (i <= 0)
+		if i < _slot_down_btns.size() and _slot_down_btns[i] != null:
+			_slot_down_btns[i].visible = can_reorder and row_visible
+			_slot_down_btns[i].disabled = (i >= _player_count - 1)
+
+func _move_slot(slot_idx: int, delta: int) -> void:
+	if _net_mode == 2 or _updating_slots:
+		return
+	var target_idx: int = slot_idx + delta
+	if slot_idx < 0 or slot_idx >= _player_count or target_idx < 0 or target_idx >= _player_count:
+		return
+	_updating_slots = true
+	var tmp_bot: bool = _slot_is_bot[slot_idx]
+	_slot_is_bot[slot_idx] = _slot_is_bot[target_idx]
+	_slot_is_bot[target_idx] = tmp_bot
+
+	var tmp_peer: int = _slot_peer_ids[slot_idx]
+	_slot_peer_ids[slot_idx] = _slot_peer_ids[target_idx]
+	_slot_peer_ids[target_idx] = tmp_peer
+
+	if slot_idx < _slot_peer_statuses.size() and target_idx < _slot_peer_statuses.size():
+		var tmp_st: String = _slot_peer_statuses[slot_idx]
+		_slot_peer_statuses[slot_idx] = _slot_peer_statuses[target_idx]
+		_slot_peer_statuses[target_idx] = tmp_st
+
+	var tmp_pawn: int = _slot_pawn_indices[slot_idx]
+	_slot_pawn_indices[slot_idx] = _slot_pawn_indices[target_idx]
+	_slot_pawn_indices[target_idx] = tmp_pawn
+
+	var tmp_col: int = _slot_color_indices[slot_idx]
+	_slot_color_indices[slot_idx] = _slot_color_indices[target_idx]
+	_slot_color_indices[target_idx] = tmp_col
+
+	var tmp_name: String = _slot_name_edits[slot_idx].text
+	_slot_name_edits[slot_idx].text = _slot_name_edits[target_idx].text
+	_slot_name_edits[target_idx].text = tmp_name
+
+	for idx_u: int in [slot_idx, target_idx]:
+		_slot_pawn_selects[idx_u].select(_slot_pawn_indices[idx_u])
+		_refresh_slot_pawn_visual(idx_u)
+		_refresh_slot_type_button(idx_u)
+		_refresh_slot_color_visuals(idx_u)
+		if _net_mode == 1:
+			_slot_name_edits[idx_u].editable = _slot_is_bot[idx_u] or (_slot_peer_ids[idx_u] == _local_peer_id)
+
+	_refresh_team_controls()
+	_refresh_exclusive_choices()
+	_refresh_table_summary()
+	_updating_slots = false
+	if _net_mode == 1:
+		lobby_config_changed.emit()
 
 func _refresh_slot_pawn_visual(slot_idx: int) -> void:
 	var p_idx: int = clampi(_slot_pawn_indices[slot_idx], 0, PAWN_OPTIONS.size() - 1)
@@ -1600,6 +1944,8 @@ func _on_start_pressed() -> void:
 		var team_id_val: int = int(t_info.get("id", -1))
 		var team_name_val: String = str(t_info.get("name", ""))
 		var team_hex_val: String = str(t_info.get("hex", ""))
+		if team_hex_val != "":
+			color_hex = team_hex_val
 
 		configs.append({
 			"name": player_name,
@@ -1624,7 +1970,116 @@ func _on_start_pressed() -> void:
 	close_screen()
 	start_match_requested.emit(configs)
 
-# --- Controle de UI P2P (Local | P2P LAN ENet | Multiplayer Web WebRTC) ---
+# --- Controle do Fluxo em 3 Etapas & UI P2P (Local | P2P LAN ENet | Servidor Web WebRTC) ---
+
+func _on_step_pill_pressed(step_idx: int) -> void:
+	if _net_mode == 2 and step_idx < 2:
+		return
+	_set_wizard_step(step_idx)
+
+func _set_wizard_step(step_idx: int) -> void:
+	if _net_mode == 2:
+		_wizard_step = 2
+	else:
+		_wizard_step = clampi(step_idx, 0, 2)
+	_refresh_wizard_ui()
+
+func _set_net_intent(intent_id: String) -> void:
+	if _net_mode != 0:
+		return
+	_net_intent = "join" if intent_id == "join" else "host"
+	_refresh_wizard_ui()
+
+func _refresh_wizard_ui() -> void:
+	var f_scale: float = 1.18 if _is_touch_mode else 1.0
+	var pill_h: float = 38.0 if _is_touch_mode else 34.0
+	var pill_fs: int = roundi(12.5 * f_scale)
+	var is_guest: bool = (_net_mode == 2)
+	var is_online: bool = (_net_mode != 0)
+	if is_guest:
+		_wizard_step = 2
+
+	if _step1_panel != null:
+		_step1_panel.visible = (_wizard_step == 0)
+	if _step2_panel != null:
+		_step2_panel.visible = (_wizard_step == 1)
+	if _step3_panel != null:
+		_step3_panel.visible = (_wizard_step == 2)
+
+	for i: int in range(_step_pill_btns.size()):
+		var sb: Button = _step_pill_btns[i]
+		if sb == null:
+			continue
+		var active_s: bool = (i == _wizard_step)
+		var locked_guest: bool = is_guest and (i < 2)
+		sb.disabled = locked_guest
+		if active_s:
+			_style_button(sb, "#24543B", "#2F6E4D", "#1A3D2B", "#F5D06F", Color("#FFF8D6"), pill_fs, Vector2(180.0, pill_h), 10, 2)
+		elif locked_guest:
+			_style_button(sb, "#101814", "#101814", "#101814", "#223029", Color("#5B7065"), pill_fs, Vector2(180.0, pill_h), 10, 1)
+		else:
+			_style_button(sb, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), pill_fs, Vector2(180.0, pill_h), 10, 1)
+
+	var is_local_tab: bool = (_active_mode_tab == MODE_TAB_LOCAL)
+	if _net_intent_panel != null:
+		_net_intent_panel.visible = (not is_local_tab) and (not is_online)
+	var intent_h: float = 40.0 if _is_touch_mode else 34.0
+	var intent_fs: int = roundi(13.0 * f_scale)
+	if _btn_intent_host != null:
+		if _net_intent == "host":
+			_style_button(_btn_intent_host, "#225742", "#2B7055", "#194030", "#7BF1A8", Color("#E9FFF2"), intent_fs, Vector2(190.0, intent_h), 9, 2)
+		else:
+			_style_button(_btn_intent_host, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#9FB8AA"), intent_fs, Vector2(190.0, intent_h), 9, 1)
+		_btn_intent_host.disabled = is_online
+	if _btn_intent_join != null:
+		if _net_intent == "join":
+			_style_button(_btn_intent_join, "#1A3E54", "#235370", "#132D3D", "#4EA8DE", Color("#E4F6FF"), intent_fs, Vector2(215.0, intent_h), 9, 2)
+		else:
+			_style_button(_btn_intent_join, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#9FB8AA"), intent_fs, Vector2(215.0, intent_h), 9, 1)
+		_btn_intent_join.disabled = is_online
+
+	# Somente Local ou HOST veem configurações da partida; convidado nunca vê ajustes do HOST
+	var show_host_cfg: bool = is_local_tab or (_net_mode == 1) or ((not is_online) and (_net_intent == "host"))
+	if _host_config_box != null:
+		_host_config_box.visible = show_host_cfg and (not is_guest)
+
+	if _p2p_ip_lbl != null:
+		_p2p_ip_lbl.visible = (_net_intent == "join") and (not is_online)
+	if _p2p_ip_edit != null:
+		_p2p_ip_edit.visible = (_net_intent == "join") and (not is_online)
+	if _btn_host != null:
+		_btn_host.visible = (not is_online) and (_net_intent == "host")
+	if _btn_join != null:
+		_btn_join.visible = (not is_online) and (_net_intent == "join")
+
+	if _web_code_lbl != null:
+		_web_code_lbl.visible = (_net_intent == "join") or is_online
+	if _web_code_edit != null:
+		_web_code_edit.visible = (_net_intent == "join") or is_online
+	if _btn_web_host != null:
+		_btn_web_host.visible = (not is_online) and (_net_intent == "host")
+	if _btn_web_join != null:
+		_btn_web_join.visible = (not is_online) and (_net_intent == "join")
+
+	if _btn_step2_next != null:
+		var can_step3: bool = is_local_tab or is_online
+		_btn_step2_next.visible = can_step3
+
+	if _btn_step3_back != null:
+		_btn_step3_back.visible = not is_guest
+	if _step3_room_banner != null:
+		_step3_room_banner.visible = is_online
+		if is_online and _step3_room_label != null:
+			var t_lbl: String = "Servidor Web (WebRTC)" if _net_transport == 2 else "P2P LAN (ENet)"
+			var r_lbl: String = "HOST • Configure a ordem dos estanceiros e inicie!" if _net_mode == 1 else "CONVIDADO • Escolha seu peão e aguarde o Host iniciar..."
+			var code_seg: String = ("  •  Sala: %s" % _web_room_code) if _web_room_code != "" else ""
+			_step3_room_label.text = "%s%s  •  %s" % [t_lbl, code_seg, r_lbl]
+	if _btn_step3_copy != null:
+		_btn_step3_copy.visible = is_online and (_web_room_code != "")
+	if _btn_step3_leave != null:
+		_btn_step3_leave.visible = is_online
+
+	_refresh_reorder_buttons()
 
 func _set_mode_tab(target_tab: int) -> void:
 	if target_tab == MODE_TAB_ENET and OS.has_feature("web"):
@@ -1633,29 +2088,30 @@ func _set_mode_tab(target_tab: int) -> void:
 		disconnect_network_requested.emit()
 	_active_mode_tab = target_tab
 	_refresh_mode_tabs()
+	_refresh_wizard_ui()
 	if _active_mode_tab == MODE_TAB_WEBRTC:
 		var sig_url: String = _web_sig_url_edit.text.strip_edges() if _web_sig_url_edit != null else "wss://magnata-do-pampa-signaling.onrender.com"
 		web_tab_opened.emit(sig_url)
 
 func _refresh_mode_tabs() -> void:
 	var f_scale: float = 1.18 if _is_touch_mode else 1.0
-	var tab_h: float = 42.0 if _is_touch_mode else 36.0
-	var tab_fs: int = roundi(13.0 * f_scale)
+	var card_sz: Vector2 = Vector2(280.0, 92.0) if _is_touch_mode else Vector2(290.0, 96.0)
+	var tab_fs: int = roundi(14.0 * f_scale)
 	if _btn_mode_local != null:
 		if _active_mode_tab == MODE_TAB_LOCAL:
-			_style_button(_btn_mode_local, "#234938", "#2C5C47", "#1A372A", "#E9C46A", Color("#FFF6D6"), tab_fs, Vector2(210.0, tab_h), 9, 2)
+			_style_button(_btn_mode_local, "#234938", "#2C5C47", "#1A372A", "#E9C46A", Color("#FFF6D6"), tab_fs, card_sz, 12, 2)
 		else:
-			_style_button(_btn_mode_local, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), tab_fs, Vector2(210.0, tab_h), 9, 1)
+			_style_button(_btn_mode_local, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), tab_fs, card_sz, 12, 1)
 	if _btn_mode_p2p != null:
 		if _active_mode_tab == MODE_TAB_ENET:
-			_style_button(_btn_mode_p2p, "#1B4236", "#255949", "#132E26", "#52B788", Color("#E8FFF2"), tab_fs, Vector2(215.0, tab_h), 9, 2)
+			_style_button(_btn_mode_p2p, "#1B4236", "#255949", "#132E26", "#52B788", Color("#E8FFF2"), tab_fs, card_sz, 12, 2)
 		else:
-			_style_button(_btn_mode_p2p, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), tab_fs, Vector2(215.0, tab_h), 9, 1)
+			_style_button(_btn_mode_p2p, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), tab_fs, card_sz, 12, 1)
 	if _btn_mode_web != null:
 		if _active_mode_tab == MODE_TAB_WEBRTC:
-			_style_button(_btn_mode_web, "#1A3E4C", "#235366", "#132D38", "#4EA8DE", Color("#E4F6FF"), tab_fs, Vector2(230.0, tab_h), 9, 2)
+			_style_button(_btn_mode_web, "#1A3E4C", "#235366", "#132D38", "#4EA8DE", Color("#E4F6FF"), tab_fs, card_sz, 12, 2)
 		else:
-			_style_button(_btn_mode_web, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), tab_fs, Vector2(230.0, tab_h), 9, 1)
+			_style_button(_btn_mode_web, "#15211B", "#1E2E26", "#101914", "#2B4035", Color("#A7BDB0"), tab_fs, card_sz, 12, 1)
 	if _p2p_panel != null:
 		_p2p_panel.visible = (_active_mode_tab == MODE_TAB_ENET)
 	if _web_panel != null:
@@ -1777,6 +2233,7 @@ func show_network_error(message: String) -> void:
 		_web_status_label.add_theme_color_override("font_color", Color("#FF9999"))
 
 func set_network_status(mode: int, status_text: String, connected_peers: Array[Dictionary], local_peer_id: int, transport_mode: int = 0) -> void:
+	var prev_mode: int = _net_mode
 	_net_mode = mode
 	_net_transport = transport_mode
 	_local_peer_id = local_peer_id
@@ -1786,7 +2243,14 @@ func set_network_status(mode: int, status_text: String, connected_peers: Array[D
 			_active_mode_tab = MODE_TAB_WEBRTC
 		elif transport_mode == 1:
 			_active_mode_tab = MODE_TAB_ENET
+		if mode == 2:
+			_net_intent = "join"
+			_wizard_step = 2
+		elif mode == 1 and prev_mode == 0:
+			_net_intent = "host"
+			_wizard_step = 2
 	_refresh_mode_tabs()
+	_refresh_wizard_ui()
 
 	var st_col: Color = Color("#9FD9BE")
 	if mode == 1:
@@ -1802,10 +2266,6 @@ func set_network_status(mode: int, status_text: String, connected_peers: Array[D
 		_web_status_label.add_theme_color_override("font_color", st_col)
 
 	var is_online: bool = (mode != 0)
-	if _btn_host != null:
-		_btn_host.visible = not is_online
-	if _btn_join != null:
-		_btn_join.visible = not is_online
 	if _btn_disconnect != null:
 		_btn_disconnect.visible = is_online
 	if _p2p_name_edit != null:
@@ -1815,10 +2275,6 @@ func set_network_status(mode: int, status_text: String, connected_peers: Array[D
 	if _p2p_port_edit != null:
 		_p2p_port_edit.editable = not is_online
 
-	if _btn_web_host != null:
-		_btn_web_host.visible = not is_online
-	if _btn_web_join != null:
-		_btn_web_join.visible = not is_online
 	if _btn_web_disconnect != null:
 		_btn_web_disconnect.visible = is_online
 	if _btn_web_copy != null:
@@ -1858,6 +2314,7 @@ func set_network_status(mode: int, status_text: String, connected_peers: Array[D
 			cb.disabled = false
 		_refresh_exclusive_choices()
 
+	_refresh_wizard_ui()
 	_refresh_start_cta_for_network()
 
 func _sync_host_slots_with_peers() -> void:
@@ -1967,6 +2424,7 @@ func apply_remote_lobby_snapshot(lobby_data: Dictionary, local_peer_id: int) -> 
 			_refresh_slot_type_button(i)
 	_refresh_exclusive_choices()
 	_updating_slots = false
+	_refresh_wizard_ui()
 	_refresh_start_cta_for_network()
 
 func get_version_badge_text() -> String:

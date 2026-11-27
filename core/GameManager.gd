@@ -139,6 +139,9 @@ var _preferences: Dictionary = {
 	"ambient_volume": 0.35,
 	"android_tutorial_seen": false,
 	"android_tutorial_disabled": false,
+	"display_mode": "windowed",
+	"window_resolution": "1600x900",
+	"graphics_quality": "high",
 	"player_chance_overrides": {}
 }
 
@@ -150,6 +153,7 @@ func _ready() -> void:
 	load_board_data()
 	load_chance_cards()
 	_setup_visuals()
+	_apply_graphics_preferences()
 	open_setup_screen()
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -336,6 +340,8 @@ func _setup_visuals() -> void:
 	hud.camera_reset_requested.connect(_on_camera_reset_requested)
 	hud.camera_zoom_in_requested.connect(_on_camera_zoom_in_requested)
 	hud.camera_zoom_out_requested.connect(_on_camera_zoom_out_requested)
+	hud.camera_rotate_left_requested.connect(_on_camera_rotate_left_requested)
+	hud.camera_rotate_right_requested.connect(_on_camera_rotate_right_requested)
 	hud.inspect_tile_requested.connect(_on_tile_inspected)
 	hud.player_inspected.connect(_on_player_inspected)
 	hud.board_layout_updated.connect(_on_board_layout_updated)
@@ -487,6 +493,9 @@ func _load_preferences() -> void:
 	_preferences["ambient_volume"] = clampf(float(cfg.get_value("audio", "ambient_volume", 0.35)), 0.0, 1.0)
 	_preferences["android_tutorial_seen"] = bool(cfg.get_value("mobile", "android_tutorial_seen", false))
 	_preferences["android_tutorial_disabled"] = bool(cfg.get_value("mobile", "android_tutorial_disabled", false))
+	_preferences["display_mode"] = str(cfg.get_value("graphics", "display_mode", "windowed"))
+	_preferences["window_resolution"] = str(cfg.get_value("graphics", "window_resolution", "1600x900"))
+	_preferences["graphics_quality"] = str(cfg.get_value("graphics", "graphics_quality", "high"))
 
 func _save_preferences() -> void:
 	var cfg: ConfigFile = ConfigFile.new()
@@ -504,7 +513,39 @@ func _save_preferences() -> void:
 	cfg.set_value("audio", "ambient_volume", clampf(float(_preferences.get("ambient_volume", 0.35)), 0.0, 1.0))
 	cfg.set_value("mobile", "android_tutorial_seen", bool(_preferences.get("android_tutorial_seen", false)))
 	cfg.set_value("mobile", "android_tutorial_disabled", bool(_preferences.get("android_tutorial_disabled", false)))
+	cfg.set_value("graphics", "display_mode", str(_preferences.get("display_mode", "windowed")))
+	cfg.set_value("graphics", "window_resolution", str(_preferences.get("window_resolution", "1600x900")))
+	cfg.set_value("graphics", "graphics_quality", str(_preferences.get("graphics_quality", "high")))
 	var _save_err: Error = cfg.save(PREFS_FILE_PATH)
+
+func _apply_graphics_preferences() -> void:
+	var quality_str: String = str(_preferences.get("graphics_quality", "high"))
+	if board_view != null and board_view.has_method("set_graphics_quality"):
+		board_view.set_graphics_quality(quality_str)
+	if DisplayServer.get_name() == "headless" or OS.get_name() == "Android" or OS.has_feature("web"):
+		return
+	var disp_mode: String = str(_preferences.get("display_mode", "windowed"))
+	if disp_mode == "fullscreen":
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN)
+	elif disp_mode == "borderless":
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+	else:
+		if DisplayServer.window_get_mode() != DisplayServer.WINDOW_MODE_WINDOWED:
+			DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		var res_str: String = str(_preferences.get("window_resolution", "1600x900"))
+		var parts: PackedStringArray = res_str.split("x", false)
+		if parts.size() == 2 and parts[0].is_valid_int() and parts[1].is_valid_int():
+			var target_w: int = clampi(int(parts[0]), 960, 3840)
+			var target_h: int = clampi(int(parts[1]), 540, 2160)
+			var screen_idx: int = DisplayServer.window_get_current_screen()
+			var usable: Rect2i = DisplayServer.screen_get_usable_rect(screen_idx)
+			var fit_w: int = mini(target_w, usable.size.x)
+			var fit_h: int = mini(target_h, usable.size.y)
+			var cur_sz: Vector2i = DisplayServer.window_get_size()
+			if cur_sz.x != fit_w or cur_sz.y != fit_h:
+				DisplayServer.window_set_size(Vector2i(fit_w, fit_h))
+				var pos: Vector2i = usable.position + Vector2i(floori(float(usable.size.x - fit_w) * 0.5), floori(float(usable.size.y - fit_h) * 0.5))
+				DisplayServer.window_set_position(pos)
 
 func _on_settings_updated(new_prefs: Dictionary) -> void:
 	_preferences = new_prefs.duplicate(true)
@@ -518,6 +559,7 @@ func _on_settings_updated(new_prefs: Dictionary) -> void:
 	if hud != null:
 		hud.set_camera_follow_label(cam_follow)
 		hud.apply_preferences(_preferences)
+	_apply_graphics_preferences()
 	_save_preferences()
 
 func _play_sfx(event_name: String) -> void:
@@ -586,6 +628,14 @@ func _on_camera_zoom_in_requested() -> void:
 func _on_camera_zoom_out_requested() -> void:
 	if board_view != null:
 		board_view.zoom_out()
+
+func _on_camera_rotate_left_requested() -> void:
+	if board_view != null:
+		board_view.rotate_camera_step(-45.0)
+
+func _on_camera_rotate_right_requested() -> void:
+	if board_view != null:
+		board_view.rotate_camera_step(45.0)
 
 func toggle_camera_view() -> void:
 	if board_view == null:
@@ -940,6 +990,10 @@ func setup_match(player_configs: Array[Dictionary]) -> void:
 	if is_team_mode():
 		for t_k: int in team_counts.keys():
 			_team_wallets[t_k] = start_money
+		for pl: Dictionary in players:
+			var t_hex: String = str(pl.get("team_color_hex", "")).strip_edges()
+			if t_hex != "":
+				pl["color_hex"] = t_hex
 	else:
 		for pl: Dictionary in players:
 			pl["team_id"] = -1
@@ -3243,9 +3297,9 @@ func _draw_chance_card(player: Dictionary) -> void:
 			var per_hotel: int = int(card.get("hotel_cost", 100))
 			var houses_count: int = 0
 			var hotels_count: int = 0
-			var owned_props: Array = player.get("properties", [])
-			for p_idx: Variant in owned_props:
-				var lvl: int = property_buildings.get(int(p_idx), 0)
+			var repair_props: Array[int] = _get_actor_or_team_properties(int(player["id"]))
+			for p_idx: int in repair_props:
+				var lvl: int = property_buildings.get(p_idx, 0)
 				if lvl >= 5:
 					hotels_count += 1
 				elif lvl > 0:
@@ -3255,7 +3309,11 @@ func _draw_chance_card(player: Dictionary) -> void:
 				_adjust_player_money(player, -repair_total)
 				if int(player["money"]) < 0:
 					_last_creditor_id = -1
-				_log_both("Manutenção: %s pagou %d Pilas (%d casa(s), %d hotel(is))." % [str(player["name"]), repair_total, houses_count, hotels_count])
+				var team_lbl: String = str(player.get("team_name", ""))
+				if is_team_mode() and team_lbl != "":
+					_log_both("Manutenção da equipe %s (%s): pagou %d Pilas (%d casa(s), %d hotel(is))." % [team_lbl, str(player["name"]), repair_total, houses_count, hotels_count])
+				else:
+					_log_both("Manutenção: %s pagou %d Pilas (%d casa(s), %d hotel(is))." % [str(player["name"]), repair_total, houses_count, hotels_count])
 				_check_bankruptcy(player, false)
 			else:
 				_log_both("%s não possui construções e escapou do custo de manutenção!" % str(player["name"]))
@@ -4029,7 +4087,15 @@ func start_periodic_land_auction(forced_tile_idx: int = -1) -> bool:
 	for p: Dictionary in players:
 		if not bool(p.get("bankrupt", false)) and int(p.get("money", 0)) >= min_bid:
 			eligible.append(int(p["id"]))
-	if eligible.size() < 2:
+	var has_rivals: bool = false
+	for ea_i: int in range(eligible.size()):
+		for eb_i: int in range(ea_i + 1, eligible.size()):
+			if not are_allied_players(eligible[ea_i], eligible[eb_i]):
+				has_rivals = true
+				break
+		if has_rivals:
+			break
+	if eligible.size() < 2 or not has_rivals:
 		return false
 
 	var color_hex: String = str(tile.get("color", "#2D5248"))
@@ -4084,6 +4150,11 @@ func submit_auction_bid(bidder_id: int, bid_amount: int) -> void:
 	if bidder.is_empty() or bool(bidder.get("bankrupt", false)):
 		pass_auction_turn(bidder_id)
 		return
+	var current_high_id: int = int(_auction_state.get("highest_bidder_id", -1))
+	if current_high_id >= 0 and are_allied_players(bidder_id, current_high_id):
+		_log_both("Leilão: equipe de %s já lidera o lance atual!" % str(bidder["name"]))
+		_advance_auction_turn(-1)
+		return
 
 	var min_next: int = _get_auction_min_next_bid()
 	var bidder_money: int = int(bidder.get("money", 0))
@@ -4126,8 +4197,9 @@ func _advance_auction_turn(just_bidder_id: int) -> void:
 	var winner_id: int = int(_auction_state.get("highest_bidder_id", -1))
 	var next_min: int = _get_auction_min_next_bid()
 
-	# Remover automaticamente quem não possui saldo para o próximo lance (exceto quem já detém o maior lance)
+	# Remover automaticamente quem não possui saldo para o próximo lance (exceto quem já detém o maior lance ou aliado)
 	var filtered: Array[int] = []
+	var has_opposing_contender: bool = false
 	for pid_var: Variant in elig:
 		var pid: int = int(pid_var)
 		var p: Dictionary = _get_player_by_id(pid)
@@ -4135,9 +4207,11 @@ func _advance_auction_turn(just_bidder_id: int) -> void:
 			continue
 		if pid == winner_id or int(p.get("money", 0)) >= next_min:
 			filtered.append(pid)
+			if winner_id >= 0 and not are_allied_players(pid, winner_id):
+				has_opposing_contender = true
 	_auction_state["eligible_ids"] = filtered
 
-	if filtered.is_empty() or (filtered.size() == 1 and winner_id >= 0 and int(filtered[0]) == winner_id):
+	if filtered.is_empty() or (winner_id >= 0 and not has_opposing_contender):
 		_finalize_auction()
 		return
 
@@ -4148,6 +4222,14 @@ func _advance_auction_turn(just_bidder_id: int) -> void:
 	else:
 		next_idx = clampi(int(_auction_state.get("turn_bidder_index", 0)), 0, filtered.size() - 1)
 		if int(filtered[next_idx]) == winner_id and filtered.size() > 1:
+			next_idx = (next_idx + 1) % filtered.size()
+
+	# Em modo de times, nunca pedir lance para aliado quando sua própria equipe já lidera o leilão
+	if winner_id >= 0 and filtered.size() > 1:
+		for _hop: int in range(filtered.size()):
+			var cand_id: int = int(filtered[next_idx])
+			if not are_allied_players(cand_id, winner_id):
+				break
 			next_idx = (next_idx + 1) % filtered.size()
 
 	_auction_state["turn_bidder_index"] = next_idx

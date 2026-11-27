@@ -22,6 +22,9 @@ const JAIL_CELL_LOCAL_OFFSET: Vector3 = Vector3(0.36, 0.0, -0.34)
 const ISO_CAM_POS: Vector3 = Vector3(8.4, 15.8, 12.8)
 const ISO_CAM_TARGET: Vector3 = Vector3(0.0, -0.15, 0.15)
 const ISO_CAM_OFFSET: Vector3 = ISO_CAM_POS - ISO_CAM_TARGET
+const DEFAULT_CAM_YAW_DEG: float = 33.58
+const DEFAULT_CAM_PITCH_DEG: float = 46.4
+const ISO_CAM_DIST: float = 21.95
 const ISO_CAM_SIZE: float = 16.4
 const TOP_CAM_POS: Vector3 = Vector3(0.0, 20.0, 0.001)
 const TOP_CAM_SIZE: float = 15.35
@@ -39,12 +42,12 @@ const TILE_ART_HOVER_TINT: Color = Color(1.18, 1.18, 1.10, 1.0)
 const TILE_ART_MORTGAGED_TINT: Color = Color(0.46, 0.43, 0.40, 1.0)
 
 const TOKEN_COLORS: Array[Color] = [
-	Color("#FF3B4E"),
-	Color("#22C55E"),
-	Color("#FFCA3A"),
+	Color("#E11D48"),
+	Color("#10B981"),
+	Color("#FACC15"),
 	Color("#2563EB"),
-	Color("#A45CFF"),
-	Color("#FF7A38")
+	Color("#C026D3"),
+	Color("#F1F5F9")
 ]
 
 var _frame_panel: PanelContainer
@@ -107,8 +110,13 @@ var _is_2d_view: bool = false
 var _camera_follow_enabled: bool = true
 var _user_zoom_scale: float = 1.0
 var _user_pan_offset: Vector3 = Vector3.ZERO
+var _cam_yaw_deg: float = DEFAULT_CAM_YAW_DEG
+var _cam_pitch_deg: float = DEFAULT_CAM_PITCH_DEG
 var _is_panning_camera: bool = false
+var _is_orbiting_camera: bool = false
 var _pan_last_mouse_pos: Vector2 = Vector2.ZERO
+var _orbit_last_mouse_pos: Vector2 = Vector2.ZERO
+var _graphics_quality: String = "high"
 var _left_press_pos: Vector2 = Vector2.ZERO
 var _left_press_moved: bool = false
 var _had_multitouch: bool = false
@@ -194,7 +202,7 @@ func _build_viewport_shell() -> void:
 	_sub_viewport.own_world_3d = true
 	_sub_viewport.handle_input_locally = false
 	_sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
-	_sub_viewport.msaa_3d = Viewport.MSAA_2X
+	set_graphics_quality(_graphics_quality)
 	_viewport_container.add_child(_sub_viewport)
 
 	_world_root = Node3D.new()
@@ -516,12 +524,39 @@ func apply_season_visuals(season_id: String, animate: bool = true) -> void:
 		if lm != null:
 			_season_tween.tween_property(lm, "emission_energy_multiplier", target_lamp_energy, 0.75)
 
+func set_graphics_quality(quality_id: String) -> void:
+	_graphics_quality = quality_id if (quality_id == "low" or quality_id == "medium" or quality_id == "high") else "high"
+	if _sub_viewport == null:
+		return
+	match _graphics_quality:
+		"low":
+			_sub_viewport.msaa_3d = Viewport.MSAA_DISABLED
+			_sub_viewport.scaling_3d_scale = 0.78
+		"medium":
+			_sub_viewport.msaa_3d = Viewport.MSAA_2X
+			_sub_viewport.scaling_3d_scale = 0.90
+		_:
+			_sub_viewport.msaa_3d = Viewport.MSAA_4X
+			_sub_viewport.scaling_3d_scale = 1.0
+
+func _get_iso_orbit_offset() -> Vector3:
+	var yaw_rad: float = deg_to_rad(_cam_yaw_deg)
+	var pitch_rad: float = deg_to_rad(_cam_pitch_deg)
+	var horiz: float = cos(pitch_rad) * ISO_CAM_DIST
+	return Vector3(
+		sin(yaw_rad) * horiz,
+		sin(pitch_rad) * ISO_CAM_DIST,
+		cos(yaw_rad) * horiz
+	)
+
 func _get_iso_quaternion() -> Quaternion:
-	var t: Transform3D = Transform3D(Basis.IDENTITY, ISO_CAM_POS).looking_at(ISO_CAM_TARGET, Vector3.UP)
+	var off: Vector3 = _get_iso_orbit_offset()
+	var t: Transform3D = Transform3D(Basis.IDENTITY, off).looking_at(Vector3.ZERO, Vector3.UP)
 	return t.basis.get_rotation_quaternion()
 
 func _get_top_quaternion() -> Quaternion:
-	return Quaternion.from_euler(Vector3(-PI * 0.5, 0.0, 0.0))
+	var q_top: Quaternion = Quaternion.from_euler(Vector3(-PI * 0.5, 0.0, 0.0))
+	return q_top
 
 func _get_medallion_iso_quaternion() -> Quaternion:
 	var q_yaw: Quaternion = Quaternion(Vector3.UP, deg_to_rad(33.5))
@@ -599,7 +634,9 @@ func _get_effective_cam_size(to_2d: bool) -> float:
 	return base_size * clampf(_user_zoom_scale, MIN_ZOOM_SCALE, MAX_ZOOM_SCALE)
 
 func _get_camera_base_pos(to_2d: bool) -> Vector3:
-	return (TOP_CAM_POS if to_2d else ISO_CAM_POS) + _user_pan_offset
+	if to_2d:
+		return TOP_CAM_POS + _user_pan_offset
+	return ISO_CAM_TARGET + _get_iso_orbit_offset() + _user_pan_offset
 
 func _apply_camera_pose_immediate(to_2d: bool) -> void:
 	_is_2d_view = to_2d
@@ -643,8 +680,42 @@ func toggle_camera_follow() -> bool:
 func reset_camera_framing(animate: bool = true) -> void:
 	_user_zoom_scale = 1.0
 	_user_pan_offset = Vector3.ZERO
+	_cam_yaw_deg = DEFAULT_CAM_YAW_DEG
+	_cam_pitch_deg = DEFAULT_CAM_PITCH_DEG
 	_is_panning_camera = false
+	_is_orbiting_camera = false
 	set_camera_2d_mode(_is_2d_view, animate)
+
+func orbit_camera_by(delta_yaw_deg: float, delta_pitch_deg: float, animate: bool = false) -> void:
+	if _is_2d_view:
+		_is_2d_view = false
+		if _env_outer_root != null:
+			_env_outer_root.visible = true
+	_cam_yaw_deg = fposmod(_cam_yaw_deg + delta_yaw_deg, 360.0)
+	_cam_pitch_deg = clampf(_cam_pitch_deg + delta_pitch_deg, 28.0, 76.0)
+	if _camera == null:
+		return
+	var target_pos: Vector3 = _get_camera_base_pos(false)
+	var target_quat: Quaternion = _get_iso_quaternion()
+	if not animate or not is_inside_tree():
+		_kill_camera_tweens()
+		_camera.position = target_pos
+		_camera.quaternion = target_quat
+		_camera.size = _get_effective_cam_size(false)
+		return
+	_kill_camera_tweens()
+	_camera_tween = create_tween()
+	_camera_tween.set_parallel(true)
+	_camera_tween.set_trans(Tween.TRANS_CUBIC)
+	_camera_tween.set_ease(Tween.EASE_OUT)
+	_camera_tween.tween_property(_camera, "position", target_pos, 0.24)
+	_camera_tween.tween_property(_camera, "quaternion", target_quat, 0.24)
+
+func rotate_camera_step(delta_yaw_deg: float) -> void:
+	orbit_camera_by(delta_yaw_deg, 0.0, true)
+
+func get_camera_yaw_deg() -> float:
+	return _cam_yaw_deg
 
 func get_user_zoom_scale() -> float:
 	return _user_zoom_scale
@@ -705,7 +776,7 @@ func _focus_camera_on_world_pos(world_pos: Vector3, zoom_factor: float = 0.50, d
 	var damped_x: float = clampf(world_pos.x * 0.80, -5.2, 5.2)
 	var damped_z: float = clampf(world_pos.z * 0.80, -5.2, 5.2)
 	var focus_target: Vector3 = Vector3(damped_x, ISO_CAM_TARGET.y, damped_z + 0.15)
-	var cam_dest: Vector3 = focus_target + ISO_CAM_OFFSET
+	var cam_dest: Vector3 = focus_target + _get_iso_orbit_offset()
 	var cam_size: float = _get_effective_cam_size(false) * clampf(zoom_factor, 0.44, 1.0)
 
 	_camera_tween = create_tween()
@@ -933,11 +1004,9 @@ func build_board(tiles: Array[Dictionary]) -> void:
 	center_title.text = "MAGNATA DO PAMPA\nESTÂNCIA & NEGÓCIOS • RS"
 	if _bold_font != null:
 		center_title.font = _bold_font
-	center_title.font_size = 52
-	center_title.pixel_size = 0.0098
+	_configure_crisp_label3d(center_title, 52, 0.0098, 7)
 	center_title.modulate = Color("#F5D06F")
 	center_title.outline_modulate = Color("#09110D")
-	center_title.outline_size = 7
 	center_title.position = Vector3(0.0, 0.088, -2.92)
 	center_title.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	_board_root.add_child(center_title)
@@ -1107,6 +1176,15 @@ func _short_board_name(tile_data: Dictionary) -> String:
 			return "Estância Real"
 		_:
 			return str(tile_data.get("name", ""))
+
+func _configure_crisp_label3d(lbl: Label3D, base_font_sz: int, base_pixel_sz: float, outline_sz: int = 8) -> void:
+	# Dobra a densidade de texels e usa filtragem anisotrópica para eliminar serrilhado no tabuleiro 3D
+	lbl.font_size = base_font_sz * 2
+	lbl.pixel_size = base_pixel_sz * 0.5
+	lbl.outline_size = outline_sz * 2
+	lbl.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
+	lbl.alpha_cut = Label3D.ALPHA_CUT_DISABLED
+	lbl.render_priority = 2
 
 func _compute_tile_art_and_label_layout(tile_idx: int, has_stripe: bool, tile_w: float, tile_d: float) -> Dictionary:
 	# Layout full-bleed sem distorção de proporção: arte de corpo inteiro, friso fino de grupo e tipografia ampla em alto contraste
@@ -1305,14 +1383,12 @@ func _create_tile_3d(tile_idx: int, rect_xz: Rect2, tile_data: Dictionary) -> No
 	name_lbl.text = _short_board_name(tile_data)
 	if _bold_font != null:
 		name_lbl.font = _bold_font
-	name_lbl.font_size = int(layout["name_font_size"])
-	name_lbl.pixel_size = float(layout["name_pixel_size"])
+	_configure_crisp_label3d(name_lbl, int(layout["name_font_size"]), float(layout["name_pixel_size"]), 8 if is_corner else 7)
 	name_lbl.width = float(layout["lbl_width"]) / name_lbl.pixel_size
-	name_lbl.line_spacing = -4.0
+	name_lbl.line_spacing = -8.0
 	name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	name_lbl.modulate = Color("#F8D568") if is_corner else Color("#FFFDF8")
 	name_lbl.outline_modulate = Color("#080E0B")
-	name_lbl.outline_size = 8 if is_corner else 7
 	name_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	var name_pos: Vector3 = layout["name_pos"]
 	if not has_price_line and not is_corner:
@@ -1333,15 +1409,13 @@ func _create_tile_3d(tile_idx: int, rect_xz: Rect2, tile_data: Dictionary) -> No
 			price_lbl.modulate = Color("#F8D568")
 		if _bold_font != null:
 			price_lbl.font = _bold_font
-		price_lbl.font_size = int(layout["price_font_size"])
-		price_lbl.pixel_size = float(layout["price_pixel_size"])
+		_configure_crisp_label3d(price_lbl, int(layout["price_font_size"]), float(layout["price_pixel_size"]), 8)
 		price_lbl.outline_modulate = Color("#080E0B")
-		price_lbl.outline_size = 8
 		price_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 		price_lbl.position = layout["price_pos"]
 		root.add_child(price_lbl)
 		_tile_value_labels[tile_idx] = price_lbl
-		_tile_base_font_sizes[tile_idx] = int(layout["price_font_size"])
+		_tile_base_font_sizes[tile_idx] = price_lbl.font_size
 
 	var owner_holder: Node3D = Node3D.new()
 	owner_holder.name = "OwnerOverlay"
@@ -1739,6 +1813,11 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 		return
 	if event is InputEventMouseMotion:
 		var mm: InputEventMouseMotion = event
+		if _is_orbiting_camera:
+			var orb_delta: Vector2 = mm.position - _orbit_last_mouse_pos
+			_orbit_last_mouse_pos = mm.position
+			orbit_camera_by(-orb_delta.x * 0.38, orb_delta.y * 0.26, false)
+			return
 		if _is_panning_camera:
 			if not _left_press_moved and mm.position.distance_to(_left_press_pos) > 8.0:
 				_left_press_moved = true
@@ -1758,7 +1837,11 @@ func _on_viewport_gui_input(event: InputEvent) -> void:
 		if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN and mb.pressed:
 			zoom_camera(1.11, false)
 			return
-		if mb.button_index == MOUSE_BUTTON_RIGHT or mb.button_index == MOUSE_BUTTON_MIDDLE:
+		if mb.button_index == MOUSE_BUTTON_RIGHT:
+			_is_orbiting_camera = mb.pressed
+			_orbit_last_mouse_pos = mb.position
+			return
+		if mb.button_index == MOUSE_BUTTON_MIDDLE:
 			_is_panning_camera = mb.pressed
 			_left_press_moved = mb.pressed
 			_pan_last_mouse_pos = mb.position
@@ -1999,11 +2082,9 @@ func update_ownership(owners_map: Dictionary[int, int], mortgaged_map: Dictionar
 			hip_lbl.text = "HIP"
 			if _bold_font != null:
 				hip_lbl.font = _bold_font
-			hip_lbl.font_size = 32
-			hip_lbl.pixel_size = 0.0058
+			_configure_crisp_label3d(hip_lbl, 32, 0.0058, 8)
 			hip_lbl.modulate = Color("#FF595E")
 			hip_lbl.outline_modulate = Color("#080E0B")
-			hip_lbl.outline_size = 8
 			hip_lbl.position = Vector3(0.0, TILE_TOP_Y + 0.045, 0.0)
 			hip_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 			overlay.add_child(hip_lbl)
@@ -2026,18 +2107,18 @@ func _refresh_tile_value_labels(mono_tiles_opt: Dictionary[int, bool] = {}) -> v
 		if tile_type == "TAX":
 			continue
 
-		var base_fs: int = _tile_base_font_sizes.get(tile_idx, 36)
+		var base_fs: int = _tile_base_font_sizes.get(tile_idx, 72)
 		if not _owners_cache.has(tile_idx):
 			lbl.text = "P$%d" % int(tile.get("price", 0))
 			lbl.font_size = base_fs
 			lbl.modulate = Color("#F8D568")
 		elif _mortgaged_cache.get(tile_idx, false):
 			lbl.text = "HIPOT"
-			lbl.font_size = maxi(26, base_fs - 4)
+			lbl.font_size = maxi(48, base_fs - 8)
 			lbl.modulate = Color("#FF758F")
 		elif tile_type == "COMPANY":
 			lbl.text = "Al.%dx" % int(tile.get("multiplier", 40))
-			lbl.font_size = maxi(26, base_fs - 4)
+			lbl.font_size = maxi(48, base_fs - 8)
 			lbl.modulate = Color("#90E0EF")
 		elif tile_type == "PROPERTY":
 			var rent_list: Array = tile.get("rent", [])
@@ -2047,7 +2128,7 @@ func _refresh_tile_value_labels(mono_tiles_opt: Dictionary[int, bool] = {}) -> v
 			if b_lvl == 0 and is_mono:
 				rent_val *= 2
 			lbl.text = "Al.P$%d" % rent_val
-			lbl.font_size = maxi(26, base_fs - 5)
+			lbl.font_size = maxi(46, base_fs - 10)
 			if b_lvl >= 5 or is_mono:
 				lbl.modulate = Color("#FFD166")
 			else:
@@ -2468,7 +2549,7 @@ func _build_gaucho_pawn_3d(player_id: int, pawn_id: String, pawn_code: String, p
 	if sculpt_glb != null:
 		sculpt_glb.name = "SculptPawn"
 		sculpt_glb.position = Vector3(0.0, 0.082, 0.0)
-		sculpt_glb.rotation_degrees = Vector3(0.0, 26.0, 0.0)
+		sculpt_glb.rotation_degrees = Vector3(0.0, -56.0, 0.0)
 		sculpt_glb.scale = Vector3(1.12, 1.12, 1.12)
 		_tint_glb_material(sculpt_glb, "PlayerPrimary", player_mat)
 		root.add_child(sculpt_glb)
@@ -2929,11 +3010,9 @@ func _build_center_chance_deck() -> void:
 	deck_lbl.text = "SORTE OU AZAR\nTCHÊ!"
 	if _bold_font != null:
 		deck_lbl.font = _bold_font
-	deck_lbl.font_size = 38
-	deck_lbl.pixel_size = 0.0074
+	_configure_crisp_label3d(deck_lbl, 38, 0.0074, 6)
 	deck_lbl.modulate = Color("#F8D568")
 	deck_lbl.outline_modulate = Color("#08120D")
-	deck_lbl.outline_size = 6
 	deck_lbl.position = Vector3(0.0, top_y + 0.014, 0.0)
 	deck_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	_deck_root.add_child(deck_lbl)
@@ -2970,11 +3049,9 @@ func _build_center_chance_deck() -> void:
 	header_lbl.text = "SORTE OU AZAR, TCHÊ!"
 	if _bold_font != null:
 		header_lbl.font = _bold_font
-	header_lbl.font_size = 24
-	header_lbl.pixel_size = 0.0052
+	_configure_crisp_label3d(header_lbl, 24, 0.0052, 5)
 	header_lbl.modulate = Color("#F8D568")
 	header_lbl.outline_modulate = Color("#08120D")
-	header_lbl.outline_size = 5
 	header_lbl.position = Vector3(0.0, 0.035, -0.73)
 	header_lbl.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	_anim_card_node.add_child(header_lbl)
@@ -2983,12 +3060,10 @@ func _build_center_chance_deck() -> void:
 	_anim_card_label.text = ""
 	if _bold_font != null:
 		_anim_card_label.font = _bold_font
-	_anim_card_label.font_size = 24
-	_anim_card_label.pixel_size = 0.0052
-	_anim_card_label.width = 480.0
+	_configure_crisp_label3d(_anim_card_label, 24, 0.0052, 0)
+	_anim_card_label.width = 480.0 / 0.5
 	_anim_card_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_anim_card_label.modulate = Color("#16211B")
-	_anim_card_label.outline_size = 0
 	_anim_card_label.position = Vector3(0.0, 0.035, 0.14)
 	_anim_card_label.rotation_degrees = Vector3(-90.0, 0.0, 0.0)
 	_anim_card_node.add_child(_anim_card_label)

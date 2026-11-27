@@ -27,6 +27,8 @@ signal camera_follow_toggle_requested
 signal camera_reset_requested
 signal camera_zoom_in_requested
 signal camera_zoom_out_requested
+signal camera_rotate_left_requested
+signal camera_rotate_right_requested
 signal inspect_tile_requested(tile_index: int)
 signal player_inspected(player_id: int)
 signal board_layout_updated(board_rect: Rect2)
@@ -60,6 +62,8 @@ var _board_quick_bar: PanelContainer
 var _btn_camera: Button
 var _btn_cam_follow: Button
 var _btn_cam_reset: Button
+var _btn_cam_rot_left: Button
+var _btn_cam_rot_right: Button
 var _btn_zoom_out: Button
 var _btn_zoom_in: Button
 var _btn_help: Button
@@ -122,6 +126,7 @@ var _btn_decline: Button
 var _btn_end_turn: Button
 var _secondary_action_row: HBoxContainer
 var _btn_trade_open: Button
+var _btn_cart_open: Button
 var _btn_deeds_jump: Button
 
 # Modais dedicados (layer 20)
@@ -188,6 +193,7 @@ var _auction_btn_50: Button
 var _auction_btn_100: Button
 var _auction_btn_pass: Button
 var _auction_min_next_val: int = 0
+var _auction_cur_bid_val: int = 0
 
 var _pause_overlay: Control
 var _pause_restart_btn: Button
@@ -283,6 +289,10 @@ var _settings_volume_btns: Dictionary[String, Button] = {}
 var _settings_step_sfx_btns: Dictionary[String, Button] = {}
 var _settings_ambient_btns: Dictionary[String, Button] = {}
 var _settings_ambient_vol_btns: Dictionary[String, Button] = {}
+var _settings_display_btns: Dictionary[String, Button] = {}
+var _settings_res_btns: Dictionary[String, Button] = {}
+var _settings_quality_btns: Dictionary[String, Button] = {}
+var _settings_res_row_box: VBoxContainer
 var _settings_note_label: Label
 var _settings_card: PanelContainer
 var _settings_scroll: ScrollContainer
@@ -760,6 +770,22 @@ func _build_ui() -> void:
 	_btn_cam_reset.pressed.connect(func() -> void: camera_reset_requested.emit())
 	qb_row.add_child(_btn_cam_reset)
 
+	_btn_cam_rot_left = Button.new()
+	_btn_cam_rot_left.text = "⟲"
+	_btn_cam_rot_left.tooltip_text = "Girar câmera -45° ao redor do tabuleiro (ou segure Botão Direito e arraste)"
+	_btn_cam_rot_left.custom_minimum_size = Vector2(qb_h, qb_h)
+	_apply_button_theme(_btn_cam_rot_left, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 1, 8.0, true)
+	_btn_cam_rot_left.pressed.connect(func() -> void: camera_rotate_left_requested.emit())
+	qb_row.add_child(_btn_cam_rot_left)
+
+	_btn_cam_rot_right = Button.new()
+	_btn_cam_rot_right.text = "⟳"
+	_btn_cam_rot_right.tooltip_text = "Girar câmera +45° ao redor do tabuleiro (ou segure Botão Direito e arraste)"
+	_btn_cam_rot_right.custom_minimum_size = Vector2(qb_h, qb_h)
+	_apply_button_theme(_btn_cam_rot_right, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 1, 8.0, true)
+	_btn_cam_rot_right.pressed.connect(func() -> void: camera_rotate_right_requested.emit())
+	qb_row.add_child(_btn_cam_rot_right)
+
 	_btn_zoom_out = Button.new()
 	_btn_zoom_out.text = "" if _is_touch_mode else "-"
 	_btn_zoom_out.tooltip_text = "Afastar câmera (ou use pinça na tela)" if _is_touch_mode else "Afastar câmera (ou use a roda do mouse)"
@@ -1145,7 +1171,7 @@ func _build_tabs_zone(parent: VBoxContainer) -> void:
 	_ticker_panel = PanelContainer.new()
 	_ticker_panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_ticker_panel.size_flags_vertical = Control.SIZE_SHRINK_END
-	_ticker_panel.custom_minimum_size = Vector2(0.0, 214.0 if not _is_touch_mode else 188.0)
+	_ticker_panel.custom_minimum_size = Vector2(0.0, 148.0 if not _is_touch_mode else 156.0)
 	_ticker_panel.clip_contents = true
 	var tk_style: StyleBoxFlat = _make_panel_style("#0B130F", "#2A4033", 9, 1)
 	tk_style.content_margin_left = 10.0
@@ -1327,8 +1353,17 @@ func _build_action_dock_zone(parent: VBoxContainer) -> void:
 	_btn_trade_open.pressed.connect(show_trade_modal)
 	_secondary_action_row.add_child(_btn_trade_open)
 
+	if not _is_touch_mode:
+		_btn_cart_open = Button.new()
+		_btn_cart_open.text = "Obras"
+		_btn_cart_open.tooltip_text = "Abrir Carrinho de Obras para construir casas e hotéis nos seus monopólios"
+		_btn_cart_open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		_apply_button_theme(_btn_cart_open, "#1D3B2F", "#285241", "#132920", "#52B788", Color("#E8FFF2"), false, sec_h, sec_fs, 10.0, true)
+		_btn_cart_open.pressed.connect(func() -> void: show_construction_cart_modal(""))
+		_secondary_action_row.add_child(_btn_cart_open)
+
 	_btn_deeds_jump = Button.new()
-	_btn_deeds_jump.text = "Minhas Escrituras (0)"
+	_btn_deeds_jump.text = "Escrituras (0)"
 	_btn_deeds_jump.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_apply_button_theme(_btn_deeds_jump, "#1B2E25", "#254033", "#13211A", "#52B788", Color("#E9F5EE"), false, sec_h, sec_fs, 10.0, true)
 	_btn_deeds_jump.pressed.connect(func() -> void:
@@ -2526,22 +2561,31 @@ func _build_auction_modal() -> void:
 	_auction_btn_20 = Button.new()
 	_auction_btn_20.text = "+P$ 20"
 	_auction_btn_20.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_auction_btn_20, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
-	_auction_btn_20.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 20))
+	_apply_button_theme(_auction_btn_20, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(12.5), 6.0, true)
+	_auction_btn_20.pressed.connect(func() -> void:
+		var base_b: int = _auction_cur_bid_val if _auction_cur_bid_val > 0 else _auction_min_next_val
+		auction_bid_submitted.emit(base_b + 20)
+	)
 	bid_row.add_child(_auction_btn_20)
 
 	_auction_btn_50 = Button.new()
 	_auction_btn_50.text = "+P$ 50"
 	_auction_btn_50.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_auction_btn_50, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
-	_auction_btn_50.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 50))
+	_apply_button_theme(_auction_btn_50, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(12.5), 6.0, true)
+	_auction_btn_50.pressed.connect(func() -> void:
+		var base_b: int = _auction_cur_bid_val if _auction_cur_bid_val > 0 else _auction_min_next_val
+		auction_bid_submitted.emit(base_b + 50)
+	)
 	bid_row.add_child(_auction_btn_50)
 
 	_auction_btn_100 = Button.new()
 	_auction_btn_100.text = "+P$ 100"
 	_auction_btn_100.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_apply_button_theme(_auction_btn_100, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(13.0), 6.0, true)
-	_auction_btn_100.pressed.connect(func() -> void: auction_bid_submitted.emit(_auction_min_next_val + 100))
+	_apply_button_theme(_auction_btn_100, "#1D4434", "#275C46", "#143025", "#52B788", Color("#D8FFE8"), false, btn_h, _fs(12.5), 6.0, true)
+	_auction_btn_100.pressed.connect(func() -> void:
+		var base_b: int = _auction_cur_bid_val if _auction_cur_bid_val > 0 else _auction_min_next_val
+		auction_bid_submitted.emit(base_b + 100)
+	)
 	bid_row.add_child(_auction_btn_100)
 
 	_auction_btn_pass = Button.new()
@@ -2576,6 +2620,7 @@ func refresh_auction_modal(auction_data: Dictionary, local_player_id: int, is_on
 	_auction_meta_label.text = "%sTabela: %s • Lance mínimo inicial: %s" % [seller_prefix, _format_brl(base_price), _format_brl(min_open)]
 	_auction_bid_label.text = TradeAndAuctionHelper.format_auction_status(cur_bid, min_open, high_name)
 
+	_auction_cur_bid_val = cur_bid
 	_auction_min_next_val = min_open if cur_bid <= 0 else (cur_bid + 10)
 	var elig: Array = auction_data.get("eligible_ids", [])
 	var t_idx: int = clampi(int(auction_data.get("turn_bidder_index", 0)), 0, maxi(0, elig.size() - 1))
@@ -2602,11 +2647,18 @@ func refresh_auction_modal(auction_data: Dictionary, local_player_id: int, is_on
 	else:
 		_auction_turn_label.text = "Aguardando lance de %s..." % bidder_name
 
-	_auction_btn_min.text = "Cobrir %s" % _format_brl(_auction_min_next_val)
+	var base_b: int = _auction_cur_bid_val if _auction_cur_bid_val > 0 else _auction_min_next_val
+	var bid_20: int = base_b + 20
+	var bid_50: int = base_b + 50
+	var bid_100: int = base_b + 100
+	_auction_btn_min.text = ("Abrir %s" if cur_bid <= 0 else "Cobrir %s") % _format_brl(_auction_min_next_val)
+	_auction_btn_20.text = "+20 (%s)" % _format_brl(bid_20)
+	_auction_btn_50.text = "+50 (%s)" % _format_brl(bid_50)
+	_auction_btn_100.text = "+100 (%s)" % _format_brl(bid_100)
 	_auction_btn_min.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val)
-	_auction_btn_20.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val + 20)
-	_auction_btn_50.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val + 50)
-	_auction_btn_100.disabled = (not can_local_act) or (bidder_money < _auction_min_next_val + 100)
+	_auction_btn_20.disabled = (not can_local_act) or (bidder_money < bid_20)
+	_auction_btn_50.disabled = (not can_local_act) or (bidder_money < bid_50)
+	_auction_btn_100.disabled = (not can_local_act) or (bidder_money < bid_100)
 	_auction_btn_pass.disabled = not can_local_act
 
 	_auction_overlay.move_to_front()
@@ -4062,6 +4114,101 @@ func _build_settings_modal() -> void:
 		amb_vol_row.add_child(av_btn)
 		_settings_ambient_vol_btns[av_key] = av_btn
 
+	# --- Seção 4: Gráficos, Tela & Qualidade 3D ---
+	var sec4: PanelContainer = PanelContainer.new()
+	var sec4_style: StyleBoxFlat = _make_panel_style("#0B1410", "#273C31", 12, 1)
+	sec4_style.content_margin_left = 14.0
+	sec4_style.content_margin_right = 14.0
+	sec4_style.content_margin_top = 12.0
+	sec4_style.content_margin_bottom = 12.0
+	sec4.add_theme_stylebox_override("panel", sec4_style)
+	content_vb.add_child(sec4)
+
+	var s4_vb: VBoxContainer = VBoxContainer.new()
+	s4_vb.add_theme_constant_override("separation", 10)
+	sec4.add_child(s4_vb)
+
+	var s4_hdr: Label = Label.new()
+	s4_hdr.text = "GRÁFICOS & TELA"
+	if _bold_font != null:
+		s4_hdr.add_theme_font_override("font", _bold_font)
+	s4_hdr.add_theme_font_size_override("font_size", _fs(13.0))
+	s4_hdr.add_theme_color_override("font_color", Color("#F3C969"))
+	s4_vb.add_child(s4_hdr)
+
+	_settings_display_btns.clear()
+	_settings_res_btns.clear()
+	if not _is_touch_mode and not OS.has_feature("web"):
+		var disp_lbl: Label = Label.new()
+		disp_lbl.text = "Modo de exibição:"
+		disp_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+		disp_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+		s4_vb.add_child(disp_lbl)
+
+		var disp_row: HBoxContainer = HBoxContainer.new()
+		disp_row.add_theme_constant_override("separation", 8)
+		s4_vb.add_child(disp_row)
+		var disp_specs: Array[Array] = [
+			["windowed", "Janela"],
+			["borderless", "Sem Bordas"],
+			["fullscreen", "Tela Cheia"]
+		]
+		for spec: Array in disp_specs:
+			var dm_key: String = str(spec[0])
+			var dm_btn: Button = Button.new()
+			dm_btn.text = str(spec[1])
+			dm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			dm_btn.pressed.connect(func() -> void: _set_global_pref("display_mode", dm_key))
+			disp_row.add_child(dm_btn)
+			_settings_display_btns[dm_key] = dm_btn
+
+		_settings_res_row_box = VBoxContainer.new()
+		_settings_res_row_box.add_theme_constant_override("separation", 6)
+		s4_vb.add_child(_settings_res_row_box)
+
+		var res_lbl: Label = Label.new()
+		res_lbl.text = "Resolução da janela:"
+		res_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+		res_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+		_settings_res_row_box.add_child(res_lbl)
+
+		var res_row: HBoxContainer = HBoxContainer.new()
+		res_row.add_theme_constant_override("separation", 8)
+		_settings_res_row_box.add_child(res_row)
+		var res_specs: Array[String] = ["1280x720", "1366x768", "1600x900", "1920x1080"]
+		for res_key: String in res_specs:
+			var r_btn: Button = Button.new()
+			r_btn.text = res_key
+			r_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var res_val: String = res_key
+			r_btn.pressed.connect(func() -> void: _set_global_pref("window_resolution", res_val))
+			res_row.add_child(r_btn)
+			_settings_res_btns[res_key] = r_btn
+
+	var q3d_lbl: Label = Label.new()
+	q3d_lbl.text = "Qualidade visual 3D (Antialiasing):"
+	q3d_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+	q3d_lbl.add_theme_color_override("font_color", Color("#CFE0D6"))
+	s4_vb.add_child(q3d_lbl)
+
+	var q3d_row: HBoxContainer = HBoxContainer.new()
+	q3d_row.add_theme_constant_override("separation", 8)
+	s4_vb.add_child(q3d_row)
+	_settings_quality_btns.clear()
+	var q3d_specs: Array[Array] = [
+		["low", "Leve"],
+		["medium", "Média"],
+		["high", "Alta"]
+	]
+	for spec: Array in q3d_specs:
+		var q_key: String = str(spec[0])
+		var q_btn: Button = Button.new()
+		q_btn.text = str(spec[1])
+		q_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		q_btn.pressed.connect(func() -> void: _set_global_pref("graphics_quality", q_key))
+		q3d_row.add_child(q_btn)
+		_settings_quality_btns[q_key] = q_btn
+
 	if _is_touch_mode:
 		var tut_btn: Button = Button.new()
 		tut_btn.text = "Rever Tutorial de Comandos (Mobile)"
@@ -4284,6 +4431,23 @@ func _refresh_settings_ui() -> void:
 		var av_btn: Button = _settings_ambient_vol_btns[av_key]
 		av_btn.disabled = (not audio_on) or (not amb_on)
 		_style_seg_btn(av_btn, absf(float(av_key) - cur_amb_vol) < 0.08)
+
+	var disp_mode: String = str(_prefs_cache.get("display_mode", "windowed"))
+	for dm_key: String in _settings_display_btns.keys():
+		_style_seg_btn(_settings_display_btns[dm_key], dm_key == disp_mode)
+
+	var is_win_mode: bool = (disp_mode == "windowed")
+	if _settings_res_row_box != null:
+		_settings_res_row_box.modulate = Color(1.0, 1.0, 1.0, 1.0) if is_win_mode else Color(0.65, 0.72, 0.68, 0.65)
+	var win_res: String = str(_prefs_cache.get("window_resolution", "1600x900"))
+	for r_key: String in _settings_res_btns.keys():
+		var r_btn: Button = _settings_res_btns[r_key]
+		r_btn.disabled = not is_win_mode
+		_style_seg_btn(r_btn, r_key == win_res)
+
+	var q3d: String = str(_prefs_cache.get("graphics_quality", "high"))
+	for q_key: String in _settings_quality_btns.keys():
+		_style_seg_btn(_settings_quality_btns[q_key], q_key == q3d)
 
 # 8. Modal de Carteira / Escrituras do Estanceiro (Adversários ou Próprio Jogador)
 func _build_portfolio_modal() -> void:
@@ -4910,12 +5074,27 @@ func hide_construction_cart_modal() -> void:
 	if _cart_overlay != null:
 		_cart_overlay.visible = false
 
+func _get_allied_owner_ids(player_id: int) -> Array[int]:
+	var allied: Array[int] = [player_id]
+	var target_team_id: int = -1
+	for p: Dictionary in _cached_players:
+		if int(p.get("id", -1)) == player_id:
+			target_team_id = int(p.get("team_id", -1))
+			break
+	if target_team_id >= 0:
+		for p: Dictionary in _cached_players:
+			var other_id: int = int(p.get("id", -1))
+			if other_id >= 0 and int(p.get("team_id", -1)) == target_team_id and not (other_id in allied):
+				allied.append(other_id)
+	return allied
+
 func _reset_cart_draft() -> void:
 	_cart_draft_levels.clear()
 	if _cached_current_idx >= 0 and _cached_current_idx < _cached_players.size():
 		var pid: int = int(_cached_players[_cached_current_idx].get("id", _cached_current_idx))
+		var allied_ids: Array[int] = _get_allied_owner_ids(pid)
 		var monos: Array[Dictionary] = ConstructionCartHelper.collect_player_monopolies(
-			pid, _cached_tiles, _cached_owners_map, _cached_mortgaged_map
+			pid, _cached_tiles, _cached_owners_map, _cached_mortgaged_map, allied_ids
 		)
 		for m: Dictionary in monos:
 			var g_tiles: Array = m.get("tiles", [])
@@ -4950,8 +5129,9 @@ func _rebuild_construction_cart_ui() -> void:
 	var active_p: Dictionary = _cached_players[_cached_current_idx]
 	var active_pid: int = int(active_p.get("id", _cached_current_idx))
 	var active_money: int = int(active_p.get("money", 0))
+	var allied_ids: Array[int] = _get_allied_owner_ids(active_pid)
 	var monos: Array[Dictionary] = ConstructionCartHelper.collect_player_monopolies(
-		active_pid, _cached_tiles, _cached_owners_map, _cached_mortgaged_map
+		active_pid, _cached_tiles, _cached_owners_map, _cached_mortgaged_map, allied_ids
 	)
 
 	if _cart_focus_group != "":
@@ -5276,7 +5456,11 @@ func set_camera_mode_label(is_2d: bool) -> void:
 			_apply_mobile_icon_button(_btn_camera, "cam_2d" if is_2d else "cam_3d", "", Color("#ECFFF5"), 24)
 			_btn_camera.tooltip_text = "Vista 2D ativa (toque para 3D)" if is_2d else "Vista 3D ativa (toque para 2D)"
 		else:
-			_btn_camera.text = "Vista 2D [Tab]" if is_2d else "Vista 3D [Tab]"
+			_btn_camera.text = "2D [Tab]" if is_2d else "3D [Tab]"
+	if _btn_cam_rot_left != null:
+		_btn_cam_rot_left.disabled = is_2d
+	if _btn_cam_rot_right != null:
+		_btn_cam_rot_right.disabled = is_2d
 	_refresh_cam_follow_button()
 
 func set_camera_follow_label(enabled: bool) -> void:
@@ -5571,6 +5755,16 @@ func refresh_hud(
 	if lock_controls or not can_trade:
 		hide_trade_modal()
 
+	if _btn_cart_open != null:
+		var has_cart_mono: bool = false
+		if has_active and not lock_controls:
+			var cart_allies: Array[int] = _get_allied_owner_ids(active_pid)
+			has_cart_mono = not ConstructionCartHelper.collect_player_monopolies(
+				active_pid, tiles, _cached_owners_map, _cached_mortgaged_map, cart_allies
+			).is_empty()
+		_btn_cart_open.disabled = lock_controls or (not has_cart_mono)
+		_btn_cart_open.text = "Obras" if has_cart_mono else "Obras (Sem mon.)"
+
 	if active_money < 0 and not owned_options.is_empty():
 		_apply_button_theme(_btn_deeds_jump, "#592822", "#75352D", "#401C18", "#FF758F", Color("#FFE8E8"), true, _bh(38.0), _fs(13.0), 10.0, true)
 		if _is_touch_mode:
@@ -5583,7 +5777,7 @@ func refresh_hud(
 			_apply_mobile_icon_button(_btn_deeds_jump, "deeds", "(%d)" % owned_options.size(), Color("#E9F5EE"), 22)
 			_btn_deeds_jump.tooltip_text = "Minhas Escrituras (%d)" % owned_options.size()
 		else:
-			_btn_deeds_jump.text = "Minhas Escrituras (%d)" % owned_options.size()
+			_btn_deeds_jump.text = "Escrituras (%d)" % owned_options.size()
 	_btn_deeds_jump.disabled = not has_active
 
 func set_network_identity(is_online: bool, is_host: bool, local_peer_id: int, local_player_id: int, wait_text: String, transport_label: String = "ONLINE", room_code: String = "") -> void:
@@ -5684,11 +5878,248 @@ func _get_player_monopoly_groups(player: Dictionary, tiles: Array[Dictionary], a
 			result.append(g)
 	return result
 
+func _get_group_color_hex(group_name: String) -> String:
+	for t: Dictionary in _cached_tiles:
+		if str(t.get("type", "")) == "PROPERTY" and str(t.get("group", "")) == group_name:
+			var c: String = str(t.get("color", ""))
+			if c != "":
+				return c
+	return "#E9C46A"
+
+func _build_monopoly_badges_row(mono_groups: Array[String]) -> HFlowContainer:
+	var flow: HFlowContainer = HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 4)
+	flow.add_theme_constant_override("v_separation", 4)
+	flow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if mono_groups.is_empty():
+		var none_lbl: Label = Label.new()
+		none_lbl.text = "0 monopólios"
+		none_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		none_lbl.add_theme_font_size_override("font_size", _fs(10.0))
+		none_lbl.add_theme_color_override("font_color", Color("#7C9486"))
+		flow.add_child(none_lbl)
+		return flow
+	for g_name: String in mono_groups:
+		var g_hex: String = _get_group_color_hex(g_name)
+		var pill: PanelContainer = PanelContainer.new()
+		pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var psb: StyleBoxFlat = _make_panel_style("#18251D", "#F5CA5C", 5, 1)
+		psb.border_width_left = 6
+		psb.border_color = Color(g_hex)
+		psb.content_margin_left = 6.0
+		psb.content_margin_right = 6.0
+		psb.content_margin_top = 1.0
+		psb.content_margin_bottom = 1.0
+		pill.add_theme_stylebox_override("panel", psb)
+		var plbl: Label = Label.new()
+		plbl.text = "★ %s" % g_name
+		plbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		if _bold_font != null:
+			plbl.add_theme_font_override("font", _bold_font)
+		plbl.add_theme_font_size_override("font_size", _fs(9.5))
+		plbl.add_theme_color_override("font_color", Color("#FFF3C4"))
+		pill.add_child(plbl)
+		flow.add_child(pill)
+	return flow
+
 func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_colors: Dictionary[int, Color], is_bot_turn: bool) -> void:
 	for child: Node in _players_box.get_children():
 		child.queue_free()
 
+	var is_teams: bool = false
+	for p_chk: Dictionary in players:
+		if int(p_chk.get("team_id", -1)) >= 0:
+			is_teams = true
+			break
+
 	var mini_dim: float = 34.0 if _is_touch_mode else 28.0
+	if is_teams:
+		var team_order: Array[int] = []
+		var team_buckets: Dictionary[int, Array] = {}
+		for i: int in range(players.size()):
+			var p: Dictionary = players[i]
+			var tid_val: int = int(p.get("team_id", -1))
+			if not team_buckets.has(tid_val):
+				team_buckets[tid_val] = []
+				team_order.append(tid_val)
+			(team_buckets[tid_val] as Array).append({"idx": i, "player": p})
+
+		for tid_val: int in team_order:
+			var entries: Array = team_buckets[tid_val]
+			if entries.is_empty():
+				continue
+			var first_p: Dictionary = (entries[0] as Dictionary)["player"]
+			var first_pid: int = int(first_p.get("id", 0))
+			var team_name: String = str(first_p.get("team_name", "Equipe %d" % (tid_val + 1)))
+			var team_hex: String = str(first_p.get("team_color_hex", ""))
+			var team_col: Color = Color(team_hex) if team_hex != "" else player_colors.get(first_pid, Color("#E9C46A"))
+			var team_money: int = int(first_p.get("money", 0))
+			var team_deeds: int = 0
+			var team_all_bankrupt: bool = true
+			var team_has_active: bool = false
+			var team_monos: Array[String] = _get_player_monopoly_groups(first_p, _cached_tiles, players)
+
+			for ent_v: Variant in entries:
+				var ent: Dictionary = ent_v
+				var ent_idx: int = int(ent["idx"])
+				var ep: Dictionary = ent["player"]
+				if ent_idx == current_idx:
+					team_has_active = true
+				if not bool(ep.get("bankrupt", false)):
+					team_all_bankrupt = false
+					team_money = int(ep.get("money", team_money))
+				team_deeds += (ep.get("properties", []) as Array).size()
+
+			var team_card: PanelContainer = PanelContainer.new()
+			var t_bg: String = "#17271E" if team_has_active else "#101914"
+			var t_sb: StyleBoxFlat = _make_panel_style(t_bg, "#24362C", 11, 2 if team_has_active else 1)
+			t_sb.border_color = team_col if team_has_active else team_col.darkened(0.35)
+			t_sb.border_width_left = 5
+			t_sb.content_margin_left = 8.0
+			t_sb.content_margin_right = 8.0
+			t_sb.content_margin_top = 7.0
+			t_sb.content_margin_bottom = 7.0
+			team_card.add_theme_stylebox_override("panel", t_sb)
+			_players_box.add_child(team_card)
+
+			var team_vb: VBoxContainer = VBoxContainer.new()
+			team_vb.add_theme_constant_override("separation", 5)
+			team_card.add_child(team_vb)
+
+			# Cabeçalho Conjunto da Equipe
+			var th_row: HBoxContainer = HBoxContainer.new()
+			th_row.add_theme_constant_override("separation", 6)
+			th_row.alignment = BoxContainer.ALIGNMENT_CENTER
+			team_vb.add_child(th_row)
+
+			var t_title_lbl: Label = Label.new()
+			t_title_lbl.text = "%s (%d mon. • %d esc.)" % [team_name.to_upper(), team_monos.size(), team_deeds]
+			t_title_lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			t_title_lbl.clip_text = true
+			if _bold_font != null:
+				t_title_lbl.add_theme_font_override("font", _bold_font)
+			t_title_lbl.add_theme_font_size_override("font_size", _fs(12.5))
+			t_title_lbl.add_theme_color_override("font_color", team_col.lightened(0.30))
+			th_row.add_child(t_title_lbl)
+
+			var t_cash_lbl: Label = Label.new()
+			t_cash_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+			t_cash_lbl.text = "FALIDO" if team_all_bankrupt else _format_brl(team_money)
+			if _bold_font != null:
+				t_cash_lbl.add_theme_font_override("font", _bold_font)
+			t_cash_lbl.add_theme_font_size_override("font_size", _fs(13.5))
+			t_cash_lbl.add_theme_color_override("font_color", Color("#73827A") if team_all_bankrupt else (Color("#FF758F") if team_money < 0 else Color("#A8FF78")))
+			th_row.add_child(t_cash_lbl)
+
+			team_vb.add_child(_build_monopoly_badges_row(team_monos))
+
+			# Lista agrupada dos integrantes da Equipe
+			for ent_v: Variant in entries:
+				var ent: Dictionary = ent_v
+				var ent_idx: int = int(ent["idx"])
+				var p: Dictionary = ent["player"]
+				var pid: int = int(p["id"])
+				var is_active: bool = (ent_idx == current_idx)
+				var is_bankrupt: bool = bool(p.get("bankrupt", false))
+				var p_props_count: int = (p.get("properties", []) as Array).size()
+
+				var m_btn_card: PanelContainer = PanelContainer.new()
+				var m_sb: StyleBoxFlat = _make_panel_style("#1E3328" if is_active else "#0D1510", "#30483B", 8, 2 if is_active else 1)
+				m_sb.border_color = Color("#FFE28A") if is_active else team_col.darkened(0.55)
+				m_sb.content_margin_left = 7.0
+				m_sb.content_margin_right = 8.0
+				m_sb.content_margin_top = 4.0
+				m_sb.content_margin_bottom = 4.0
+				m_btn_card.add_theme_stylebox_override("panel", m_sb)
+				m_btn_card.mouse_filter = Control.MOUSE_FILTER_STOP
+				m_btn_card.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+				m_btn_card.tooltip_text = "Inspecionar escrituras e obras de %s" % team_name
+				var inspected_pid: int = pid
+				m_btn_card.gui_input.connect(func(ev: InputEvent) -> void:
+					if ev is InputEventMouseButton:
+						var mb: InputEventMouseButton = ev
+						if mb.button_index == MOUSE_BUTTON_LEFT and mb.pressed:
+							player_inspected.emit(inspected_pid)
+				)
+				team_vb.add_child(m_btn_card)
+
+				var m_row: HBoxContainer = HBoxContainer.new()
+				m_row.add_theme_constant_override("separation", 7)
+				m_row.alignment = BoxContainer.ALIGNMENT_CENTER
+				m_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				m_btn_card.add_child(m_row)
+
+				var icon_panel: PanelContainer = PanelContainer.new()
+				var mem_dim: float = mini_dim - 2.0
+				icon_panel.custom_minimum_size = Vector2(mem_dim, mem_dim)
+				icon_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				var icon_sb: StyleBoxFlat = _make_panel_style("#0B130F", "#D4AF37", 7, 2)
+				icon_sb.border_color = team_col
+				icon_sb.content_margin_left = 2.0
+				icon_sb.content_margin_right = 2.0
+				icon_sb.content_margin_top = 2.0
+				icon_sb.content_margin_bottom = 2.0
+				icon_panel.add_theme_stylebox_override("panel", icon_sb)
+				m_row.add_child(icon_panel)
+
+				var icon_tex: TextureRect = TextureRect.new()
+				icon_tex.texture = _try_load_pawn_art(str(p.get("pawn_id", "cuia")))
+				icon_tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				icon_tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				icon_tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				icon_panel.add_child(icon_tex)
+
+				var m_info_vb: VBoxContainer = VBoxContainer.new()
+				m_info_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				m_info_vb.add_theme_constant_override("separation", 1)
+				m_info_vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				m_row.add_child(m_info_vb)
+
+				var role_tag: String = _format_player_net_tag(p)
+				var is_local_me: bool = _net_is_online and (not bool(p.get("is_bot", false))) and (pid == _net_local_player_id)
+				var m_name_lbl: Label = Label.new()
+				m_name_lbl.text = "%s%s" % [str(p["name"]), role_tag]
+				m_name_lbl.clip_text = true
+				m_name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				if (is_active or is_local_me) and _bold_font != null:
+					m_name_lbl.add_theme_font_override("font", _bold_font)
+				m_name_lbl.add_theme_font_size_override("font_size", _fs(12.0))
+				if is_bankrupt:
+					m_name_lbl.add_theme_color_override("font_color", Color("#73827A"))
+				elif is_active:
+					m_name_lbl.add_theme_color_override("font_color", Color("#90E0EF") if is_bot_turn else Color("#FFFDF5"))
+				elif is_local_me:
+					m_name_lbl.add_theme_color_override("font_color", Color("#9CF6B8"))
+				else:
+					m_name_lbl.add_theme_color_override("font_color", Color("#DCEAE2"))
+				m_info_vb.add_child(m_name_lbl)
+
+				var m_tags: Array[String] = []
+				if is_bankrupt:
+					m_tags.append("FALIDO")
+				else:
+					m_tags.append("%d esc." % p_props_count)
+					if bool(p.get("in_jail", false)):
+						m_tags.append("XADREZ")
+					var jc_m: int = int(p.get("jail_free_cards", 0))
+					if jc_m > 0:
+						m_tags.append("Livre x%d" % jc_m)
+				var m_sub_lbl: Label = Label.new()
+				m_sub_lbl.text = " • ".join(m_tags)
+				m_sub_lbl.clip_text = true
+				m_sub_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				m_sub_lbl.add_theme_font_size_override("font_size", _fs(10.0))
+				m_sub_lbl.add_theme_color_override("font_color", Color("#F3C969") if bool(p.get("in_jail", false)) else Color("#90A99B"))
+				m_info_vb.add_child(m_sub_lbl)
+
+				var m_chev: Label = Label.new()
+				m_chev.text = "▶" if is_active else "›"
+				m_chev.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				m_chev.add_theme_font_size_override("font_size", _fs(13.0))
+				m_chev.add_theme_color_override("font_color", Color("#F5D06F") if is_active else Color("#8EA89A"))
+				m_row.add_child(m_chev)
+		return
+
 	for i: int in range(players.size()):
 		var p: Dictionary = players[i]
 		var pid: int = int(p["id"])
@@ -5749,7 +6180,7 @@ func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_
 
 		var info_vb: VBoxContainer = VBoxContainer.new()
 		info_vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		info_vb.add_theme_constant_override("separation", 1)
+		info_vb.add_theme_constant_override("separation", 2)
 		info_vb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		row.add_child(info_vb)
 
@@ -5773,15 +6204,12 @@ func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_
 		info_vb.add_child(name_lbl)
 
 		var tags: Array[String] = []
-		var p_team_name: String = str(p.get("team_name", ""))
-		if p_team_name != "":
-			tags.append(p_team_name.to_upper())
 		if is_bankrupt:
 			tags.append("FALIDO")
 		else:
 			tags.append("%d esc." % props_count)
 			if not mono_groups.is_empty():
-				tags.append("★ %d mon." % mono_groups.size())
+				tags.append("%d mon." % mono_groups.size())
 			if bool(p.get("in_jail", false)):
 				tags.append("XADREZ")
 			var jc: int = int(p.get("jail_free_cards", 0))
@@ -5795,6 +6223,9 @@ func _rebuild_players_list(players: Array[Dictionary], current_idx: int, player_
 		sub_lbl.add_theme_font_size_override("font_size", _fs(10.5))
 		sub_lbl.add_theme_color_override("font_color", Color("#F3C969") if (bool(p.get("in_jail", false)) or not mono_groups.is_empty()) else Color("#95AE9F"))
 		info_vb.add_child(sub_lbl)
+
+		if not is_bankrupt and not mono_groups.is_empty():
+			info_vb.add_child(_build_monopoly_badges_row(mono_groups))
 
 		# Faixa visual instantânea dos grupos de cor/companhias possuídos (com borda dourada para monopólio completo)
 		if not is_bankrupt and props_count > 0:

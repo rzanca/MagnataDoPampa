@@ -419,7 +419,9 @@ func _on_primary_pressed() -> void:
 	elif st_key == "NOT_INSTALLED":
 		_updater.call("start_one_click_update", false)
 	elif bool(_last_snap.get("exe_exists", false)):
-		_updater.call("launch_game")
+		var launched: bool = bool(_updater.call("launch_game"))
+		if launched and DisplayServer.get_name() != "headless":
+			get_tree().quit()
 
 func _on_open_dir_pressed() -> void:
 	var dir_path: String = str(_last_snap.get("install_dir", ""))

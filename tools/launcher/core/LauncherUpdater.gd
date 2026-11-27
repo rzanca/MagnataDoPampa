@@ -415,7 +415,8 @@ func _on_download_request_completed(result: int, response_code: int, _headers: P
 	var ok: bool = install_downloaded_package(DOWNLOAD_TEMP_PATH, asset_name, expected_sha)
 	if ok and _auto_launch_after_update:
 		_auto_launch_after_update = false
-		launch_game()
+		if launch_game() and DisplayServer.get_name() != "headless":
+			get_tree().quit()
 
 func install_downloaded_package(package_path: String, asset_name: String, expected_sha256: String = "") -> bool:
 	_emit_snapshot(LauncherState.INSTALLING, "Verificando integridade e instalando atualização...")

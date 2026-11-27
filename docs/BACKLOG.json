@@ -211,6 +211,13 @@
       "owner_agent": "02_engenheiro_core.md",
       "status": "done",
       "notes": "Resolve travamento silencioso em 'Entrando na sala...' causado pela ausência da extensão webrtc-native no Desktop/Android; adiciona WebSocket Room Relay em estrela com heartbeat 25s e suporte a frames fragmentados em tools/signaling_server/server.mjs e transporte WebSocket Relay nativo com serialização binária fiel em core/NetworkManager.gd (v0.11.2)."
+    },
+    {
+      "id": "LOTE-27",
+      "title": "Overhaul Completo UX/UI Windows, Fluxo em 3 Etapas, Câmera 360°, Times, Leilão & Launcher",
+      "owner_agent": "00_product_manager.md",
+      "status": "done",
+      "notes": "Auto-fechamento do Launcher após iniciar o jogo; Setup em 3 etapas (Modo -> Config & Sala -> Estanceiros) ocultando ajustes do HOST para convidados e permitindo reordenar jogadores; cores distintas e cor exclusiva de equipe em modos 2x2/3x3; peões 3D virados de perfil (-56°), órbita livre 360° e botões de rotação; Label3D nítido com mipmaps anisotrópicos; correção do +20/+50/+100 nos leilões e bloqueio de lances entre aliados; Carrinho de Obras e Manutenção integrados ao grupo no modo times; lista de estanceiros agrupada por equipe com contagem e badges de monopólio; menu Gráficos/Janela/Resolução; botões rápidos no Desktop HUD e suporte a áudio externo em assets/audio/ (v0.12.0)."
     }
   ]
 }
