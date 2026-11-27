@@ -1,10 +1,10 @@
 {
     "product_name":  "Magnata do Pampa",
-    "version":  "0.11.2",
-    "build_number":  16,
+    "version":  "0.12.0",
+    "build_number":  17,
     "channel":  "stable",
     "github_repo":  "rzanca/MagnataDoPampa",
-    "release_notes":  "v0.11.2: Correcao definitiva do Multiplayer Web (substitui handshake WebRTC travado por WebSocket Room Relay WSS no servidor Render com keepalive 25s + serializacao binaria em NetworkManager) e remocao da copia para pasta MDP.",
-    "built_at":  "2026-11-27T03:42:44Z",
-    "git_commit":  "df52c31"
+    "release_notes":  "v0.12.0: Fluxo de lobby em 3 etapas com config exclusiva do Host e ordenacao de jogadores, camera 3D orbital livre 360 graus, Label3D nitido, peoes de perfil e cores distintas, correcao do +20 no leilao e bloqueio entre aliados, Carrinho de Obras e Manutencao em equipe, HUD agrupado por time com contagem e badges de monopolio, menu de graficos/janela/resolucao, botoes rapidos no Windows, suporte a audio externo em assets/audio/ e fechamento automatico do Launcher.",
+    "built_at":  "2026-11-27T10:16:46Z",
+    "git_commit":  "dc83118"
 }
