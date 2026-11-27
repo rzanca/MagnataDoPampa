@@ -84,6 +84,7 @@ var _last_building_levels: Dictionary[int, int] = {}
 var _mortgaged_cache: Dictionary[int, bool] = {}
 
 var _player_colors: Dictionary[int, Color] = {}
+var _player_teams: Dictionary[int, Dictionary] = {}
 var _token_nodes: Dictionary[int, Node3D] = {}
 var _token_sculpts: Dictionary[int, Node3D] = {}
 var _model_scene_cache: Dictionary[String, PackedScene] = {}
@@ -1964,6 +1965,15 @@ func get_player_color(player_id: int) -> Color:
 	var safe_idx: int = absi(player_id) % TOKEN_COLORS.size()
 	return TOKEN_COLORS[safe_idx]
 
+func _are_allied_owners(owner_a: int, owner_b: int) -> bool:
+	if owner_a < 0 or owner_b < 0:
+		return false
+	if owner_a == owner_b:
+		return true
+	var team_a: int = int((_player_teams.get(owner_a, {}) as Dictionary).get("team_id", -1))
+	var team_b: int = int((_player_teams.get(owner_b, {}) as Dictionary).get("team_id", -1))
+	return team_a >= 0 and team_a == team_b
+
 func _compute_monopoly_tiles(owners_map: Dictionary[int, int]) -> Dictionary[int, bool]:
 	var mono_tiles: Dictionary[int, bool] = {}
 	if _tiles_cache.is_empty():
@@ -1991,7 +2001,7 @@ func _compute_monopoly_tiles(owners_map: Dictionary[int, int]) -> Dictionary[int
 		var all_same: bool = true
 		for idx_var: Variant in list:
 			var tid: int = int(idx_var)
-			if owners_map.get(tid, -1) != expected_owner:
+			if not _are_allied_owners(owners_map.get(tid, -1), expected_owner):
 				all_same = false
 				break
 		if all_same:
@@ -2418,19 +2428,30 @@ func setup_tokens(players: Array[Dictionary]) -> void:
 	_token_jail_rings.clear()
 	_jailed_player_ids.clear()
 	_player_colors.clear()
+	_player_teams.clear()
 	_active_player_id = -1
 	_total_players_count = players.size()
 
 	for i: int in range(players.size()):
 		var player: Dictionary = players[i]
 		var pid: int = int(player.get("id", i))
+		var t_id: int = int(player.get("team_id", -1))
+		var t_name: String = str(player.get("team_name", ""))
+		var t_hex: String = str(player.get("team_color_hex", ""))
+		_player_teams[pid] = {
+			"team_id": t_id,
+			"team_name": t_name,
+			"team_color_hex": t_hex
+		}
 		var custom_hex: String = str(player.get("color_hex", ""))
+		if t_id >= 0 and t_hex != "":
+			custom_hex = t_hex
 		var token_color: Color = Color(custom_hex) if custom_hex != "" else TOKEN_COLORS[i % TOKEN_COLORS.size()]
 		_player_colors[pid] = token_color
 
 		var pawn_id: String = str(player.get("pawn_id", "cuia"))
 		var pawn_code: String = str(player.get("pawn_code", "P%d" % (i + 1)))
-		var pawn_node: Node3D = _build_gaucho_pawn_3d(pid, pawn_id, pawn_code, token_color)
+		var pawn_node: Node3D = _build_gaucho_pawn_3d(pid, pawn_id, pawn_code, token_color, t_id >= 0)
 		_tokens_root.add_child(pawn_node)
 		_token_nodes[pid] = pawn_node
 
@@ -2476,7 +2497,7 @@ func _add_mesh_part(
 	parent.add_child(inst)
 	return inst
 
-func _build_gaucho_pawn_3d(player_id: int, pawn_id: String, pawn_code: String, player_color: Color) -> Node3D:
+func _build_gaucho_pawn_3d(player_id: int, pawn_id: String, pawn_code: String, player_color: Color, is_team_member: bool = false) -> Node3D:
 	var root: Node3D = Node3D.new()
 	var vivid_col: Color = _boost_vivid_color(player_color)
 	var player_mat: StandardMaterial3D = _make_vivid_material(vivid_col, 0.22, 0.16, 0.20)
@@ -2533,6 +2554,14 @@ func _build_gaucho_pawn_3d(player_id: int, pawn_id: String, pawn_code: String, p
 	base_disc.height = 0.048
 	base_disc.radial_segments = 32
 	_add_mesh_part(root, base_disc, Vector3(0.0, 0.058, 0.0), player_mat)
+
+	if is_team_member:
+		var team_collar: TorusMesh = TorusMesh.new()
+		team_collar.inner_radius = 0.244
+		team_collar.outer_radius = 0.280
+		team_collar.rings = 32
+		team_collar.ring_segments = 10
+		_add_mesh_part(root, team_collar, Vector3(0.0, 0.048, 0.0), gold_mat, Vector3.ZERO, Vector3(1.0, 0.48, 1.0))
 
 	# Haste dourada discreta que sustenta o medalhão na vista 3D isométrica (retrai automaticamente no 2D)
 	var stem_cyl: CylinderMesh = CylinderMesh.new()

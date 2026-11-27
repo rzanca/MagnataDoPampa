@@ -180,6 +180,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		toggle_camera_view()
 		vp.set_input_as_handled()
 		return
+	if key_event.keycode == KEY_Q or key_event.keycode == KEY_LEFT:
+		_on_camera_rotate_left_requested()
+		vp.set_input_as_handled()
+		return
+	if key_event.keycode == KEY_W or key_event.keycode == KEY_RIGHT:
+		_on_camera_rotate_right_requested()
+		vp.set_input_as_handled()
+		return
+	if key_event.keycode == KEY_X or key_event.keycode == KEY_HOME:
+		_on_camera_reset_requested()
+		vp.set_input_as_handled()
+		return
 
 	if _is_human_input_blocked() or current_state == TurnState.GAME_OVER:
 		return

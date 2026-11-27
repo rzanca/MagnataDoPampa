@@ -109,6 +109,9 @@ var _ticker_hdr_label: Label
 var _ticker_label: Label
 var _log_label: Label
 var _log_scroll: ScrollContainer
+var _log_entries: Array[Dictionary] = []
+var _log_filter: String = "all"
+var _log_filter_btns: Dictionary[String, Button] = {}
 var _cached_active_pid: int = -1
 
 # Dock Contextual Inferior
@@ -762,7 +765,7 @@ func _build_ui() -> void:
 
 	_btn_cam_reset = Button.new()
 	_btn_cam_reset.text = "" if _is_touch_mode else "Centralizar"
-	_btn_cam_reset.tooltip_text = "Voltar imediatamente ao enquadramento geral do tabuleiro"
+	_btn_cam_reset.tooltip_text = "Voltar ao enquadramento geral do tabuleiro [X / Home]"
 	_apply_button_theme(_btn_cam_reset, "#1A2721", "#253830", "#121C17", "#4D695B", Color("#E6F0EA"), false, qb_h, qb_fs, 10.0, true)
 	if _is_touch_mode:
 		_btn_cam_reset.custom_minimum_size = Vector2(qb_h, qb_h)
@@ -772,7 +775,7 @@ func _build_ui() -> void:
 
 	_btn_cam_rot_left = Button.new()
 	_btn_cam_rot_left.text = "⟲"
-	_btn_cam_rot_left.tooltip_text = "Girar câmera -45° ao redor do tabuleiro (ou segure Botão Direito e arraste)"
+	_btn_cam_rot_left.tooltip_text = "Girar câmera -45° [Q / ←] (ou arraste com Botão Direito)"
 	_btn_cam_rot_left.custom_minimum_size = Vector2(qb_h, qb_h)
 	_apply_button_theme(_btn_cam_rot_left, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 1, 8.0, true)
 	_btn_cam_rot_left.pressed.connect(func() -> void: camera_rotate_left_requested.emit())
@@ -780,7 +783,7 @@ func _build_ui() -> void:
 
 	_btn_cam_rot_right = Button.new()
 	_btn_cam_rot_right.text = "⟳"
-	_btn_cam_rot_right.tooltip_text = "Girar câmera +45° ao redor do tabuleiro (ou segure Botão Direito e arraste)"
+	_btn_cam_rot_right.tooltip_text = "Girar câmera +45° [W / →] (ou arraste com Botão Direito)"
 	_btn_cam_rot_right.custom_minimum_size = Vector2(qb_h, qb_h)
 	_apply_button_theme(_btn_cam_rot_right, "#18251F", "#24372E", "#121B17", "#4D695B", Color("#E6F0EA"), true, qb_h, qb_fs + 1, 8.0, true)
 	_btn_cam_rot_right.pressed.connect(func() -> void: camera_rotate_right_requested.emit())
@@ -1211,12 +1214,34 @@ func _build_tabs_zone(parent: VBoxContainer) -> void:
 	_ticker_label.add_theme_color_override("font_color", Color("#D8E6DD"))
 	_ticker_scroll.add_child(_ticker_label)
 
-	# --- ABA 1: DIÁRIO COMPLETO DA RODADA ---
+	# --- ABA 1: DIÁRIO COMPLETO DA RODADA (COM FILTRO RÁPIDO) ---
 	var log_tab: VBoxContainer = VBoxContainer.new()
 	log_tab.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	log_tab.add_theme_constant_override("separation", 6)
 	log_tab.visible = false
 	tab_frame.add_child(log_tab)
 	_tab_panels.append(log_tab)
+
+	var log_filter_row: HBoxContainer = HBoxContainer.new()
+	log_filter_row.add_theme_constant_override("separation", 4)
+	log_tab.add_child(log_filter_row)
+
+	_log_filter_btns.clear()
+	var lf_specs: Array[Array] = [
+		["all", "Tudo"],
+		["trades", "Negócios"],
+		["auctions", "Leilões"],
+		["cards", "Cartas"]
+	]
+	for spec: Array in lf_specs:
+		var lf_key: String = str(spec[0])
+		var lf_btn: Button = Button.new()
+		lf_btn.text = str(spec[1])
+		lf_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lf_btn.pressed.connect(func() -> void: _set_log_filter(lf_key))
+		log_filter_row.add_child(lf_btn)
+		_log_filter_btns[lf_key] = lf_btn
+	_refresh_log_filter_buttons()
 
 	_log_scroll = ScrollContainer.new()
 	_log_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -2618,7 +2643,17 @@ func refresh_auction_modal(auction_data: Dictionary, local_player_id: int, is_on
 	_auction_title_label.text = tile_name
 	var seller_prefix: String = ("Vendedor: %s • " % seller_name) if (seller_id >= 0 and seller_name != "") else ""
 	_auction_meta_label.text = "%sTabela: %s • Lance mínimo inicial: %s" % [seller_prefix, _format_brl(base_price), _format_brl(min_open)]
-	_auction_bid_label.text = TradeAndAuctionHelper.format_auction_status(cur_bid, min_open, high_name)
+	var high_id: int = int(auction_data.get("highest_bidder_id", -1))
+	var high_team_name: String = ""
+	if high_id >= 0:
+		for p: Dictionary in _cached_players:
+			if int(p.get("id", -1)) == high_id and int(p.get("team_id", -1)) >= 0:
+				high_team_name = str(p.get("team_name", ""))
+				break
+	var status_line: String = TradeAndAuctionHelper.format_auction_status(cur_bid, min_open, high_name)
+	if high_team_name != "" and cur_bid > 0:
+		status_line += "\nEquipe %s na liderança — aliados não disputam contra o colega." % high_team_name
+	_auction_bid_label.text = status_line
 
 	_auction_cur_bid_val = cur_bid
 	_auction_min_next_val = min_open if cur_bid <= 0 else (cur_bid + 10)
@@ -5516,7 +5551,50 @@ func _refresh_sound_button() -> void:
 		else:
 			_btn_sound.text = "Mudo"
 
+func _classify_log_msg(msg: String) -> String:
+	var low: String = msg.to_lower()
+	if low.contains("leilão") or low.contains("leilao") or low.contains("martelo") or low.contains("arremat") or low.contains("lance"):
+		return "auctions"
+	if low.contains("carta") or low.contains("estação") or low.contains("estacao") or low.contains("feriadão") or low.contains("feriadao") or low.contains("xadrez") or low.contains("missão") or low.contains("missao"):
+		return "cards"
+	if low.contains("comprou") or low.contains("negoci") or low.contains("troca") or low.contains("aluguel") or low.contains("hipotec") or low.contains("constru") or low.contains("carrinho") or low.contains("vendeu") or low.contains("pilas"):
+		return "trades"
+	return "other"
+
+func _set_log_filter(filter_key: String) -> void:
+	_log_filter = filter_key if (filter_key in ["all", "trades", "auctions", "cards"]) else "all"
+	_refresh_log_filter_buttons()
+	_render_filtered_log()
+
+func _refresh_log_filter_buttons() -> void:
+	var lf_h: float = _bh(28.0)
+	var lf_fs: int = _fs(11.0)
+	for f_key: String in _log_filter_btns.keys():
+		var f_btn: Button = _log_filter_btns[f_key]
+		if f_btn == null:
+			continue
+		if f_key == _log_filter:
+			_apply_button_theme(f_btn, "#234938", "#2C5C47", "#1A372A", "#E9C46A", Color("#FFF6D6"), true, lf_h, lf_fs, 7.0, true)
+		else:
+			_apply_button_theme(f_btn, "#121C17", "#1C2B23", "#0D1410", "#2E4539", Color("#9FB8AA"), false, lf_h, lf_fs, 7.0, false)
+
+func _render_filtered_log() -> void:
+	if _log_label == null:
+		return
+	var shown_lines: PackedStringArray = PackedStringArray()
+	for entry: Dictionary in _log_entries:
+		var cat: String = str(entry.get("cat", "other"))
+		if _log_filter != "all" and cat != _log_filter:
+			continue
+		shown_lines.append("• " + str(entry.get("text", "")))
+	if shown_lines.is_empty():
+		_log_label.text = "Nenhum registro nesta categoria ainda." if _log_filter != "all" else ""
+	else:
+		_log_label.text = "\n".join(shown_lines)
+	call_deferred("_scroll_log_to_bottom")
+
 func clear_log() -> void:
+	_log_entries.clear()
 	if _log_label != null:
 		_log_label.text = ""
 	if _ticker_label != null:
@@ -5525,15 +5603,16 @@ func clear_log() -> void:
 func push_log(msg: String) -> void:
 	if _log_label == null:
 		return
-	var current_lines: PackedStringArray = _log_label.text.split("\n", false)
-	current_lines.append("• " + msg)
-	if current_lines.size() > 48:
-		current_lines = current_lines.slice(current_lines.size() - 48, current_lines.size())
-	_log_label.text = "\n".join(current_lines)
+	_log_entries.append({"text": msg, "cat": _classify_log_msg(msg)})
+	if _log_entries.size() > 64:
+		_log_entries = _log_entries.slice(_log_entries.size() - 64, _log_entries.size())
+	_render_filtered_log()
 	if _ticker_label != null:
-		var recent_count: int = mini(10, current_lines.size())
-		var recent_slice: PackedStringArray = current_lines.slice(current_lines.size() - recent_count, current_lines.size())
-		_ticker_label.text = "\n".join(recent_slice)
+		var recent_lines: PackedStringArray = PackedStringArray()
+		var start_idx: int = maxi(0, _log_entries.size() - 10)
+		for idx: int in range(start_idx, _log_entries.size()):
+			recent_lines.append("• " + str(_log_entries[idx].get("text", "")))
+		_ticker_label.text = "\n".join(recent_lines)
 	call_deferred("_scroll_log_to_bottom")
 
 func _scroll_log_to_bottom() -> void:

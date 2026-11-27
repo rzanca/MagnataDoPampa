@@ -218,6 +218,13 @@
       "owner_agent": "00_product_manager.md",
       "status": "done",
       "notes": "Auto-fechamento do Launcher após iniciar o jogo; Setup em 3 etapas (Modo -> Config & Sala -> Estanceiros) ocultando ajustes do HOST para convidados e permitindo reordenar jogadores; cores distintas e cor exclusiva de equipe em modos 2x2/3x3; peões 3D virados de perfil (-56°), órbita livre 360° e botões de rotação; Label3D nítido com mipmaps anisotrópicos; correção do +20/+50/+100 nos leilões e bloqueio de lances entre aliados; Carrinho de Obras e Manutenção integrados ao grupo no modo times; lista de estanceiros agrupada por equipe com contagem e badges de monopólio; menu Gráficos/Janela/Resolução; botões rápidos no Desktop HUD e suporte a áudio externo em assets/audio/ (v0.12.0)."
+    },
+    {
+      "id": "LOTE-28",
+      "title": "Destaques 3D de Equipe, Atalhos Q/W/X de Câmera, Filtro no Diário, Aviso de Leilão e Gerador Lyria",
+      "owner_agent": "00_product_manager.md",
+      "status": "done",
+      "notes": "Monopólios divididos entre aliados passam a exibir borda dourada no tabuleiro 3D e aro dourado nos peões de equipe; atalhos de teclado Q/←, W/→ e X/Home para girar e centralizar câmera 3D a qualquer momento; filtros Tudo/Negócios/Leilões/Cartas na aba Diário; aviso claro de equipe líder dispensando aliados no Leilão; gerador Python oficial Lyria 3.5 em tools/audio/generate_gemini_audio.py."
     }
   ]
 }
